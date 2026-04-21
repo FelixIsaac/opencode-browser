@@ -95,63 +95,58 @@ function writeMessage(message) {
 const SOCKET_PATH = platform() === "win32"
   ? "\\\\.\\pipe\\opencode-browser"
   : join(homedir(), ".opencode-browser", "browser.sock");
-let mcpConnected = false;
-let mcpSocket = null;
+
+// Multi-client: each connected MCP server gets a unique clientId
+let nextClientId = 0;
+const clients = new Map(); // clientId → socket
+
+// pendingRequests maps hostRequestId → { clientId, mcpId }
+// so tool responses route back to the correct client
 let pendingRequests = new Map();
 let requestId = 0;
 
 function connectToMcpServer(attempt = 1) {
-  // We'll create a Unix socket server that the MCP server connects to
-  // This way the host can receive tool requests from OpenCode
-  
   // Clean up stale socket (Unix only — named pipes on Windows are auto-cleaned)
   if (platform() !== "win32") {
     try {
       if (existsSync(SOCKET_PATH)) unlinkSync(SOCKET_PATH);
     } catch {}
   }
-  
+
   const server = createServer((socket) => {
-    log("MCP server connected");
-    mcpSocket = socket;
-    mcpConnected = true;
-    
-    // Notify extension
-    writeMessage({ type: "mcp_connected" });
-    
+    const clientId = ++nextClientId;
+    clients.set(clientId, socket);
+    log(`MCP client ${clientId} connected (total: ${clients.size})`);
+
+    if (clients.size === 1) writeMessage({ type: "mcp_connected" });
+
     let buffer = "";
-    
     socket.on("data", (data) => {
       buffer += data.toString();
-      
-      // Process complete JSON messages (newline-delimited)
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
-      
       for (const line of lines) {
         if (line.trim()) {
           try {
-            const message = JSON.parse(line);
-            handleMcpMessage(message);
+            handleMcpMessage(clientId, JSON.parse(line));
           } catch (e) {
             log("Failed to parse MCP message:", e.message);
           }
         }
       }
     });
-    
+
     socket.on("close", () => {
-      log("MCP server disconnected");
-      mcpSocket = null;
-      mcpConnected = false;
-      writeMessage({ type: "mcp_disconnected" });
+      clients.delete(clientId);
+      log(`MCP client ${clientId} disconnected (total: ${clients.size})`);
+      if (clients.size === 0) writeMessage({ type: "mcp_disconnected" });
     });
-    
+
     socket.on("error", (err) => {
-      log("MCP socket error:", err.message);
+      log(`MCP client ${clientId} error:`, err.message);
     });
   });
-  
+
   const tryListen = () => {
     server.listen(SOCKET_PATH, () => {
       log("Listening for MCP connections on", SOCKET_PATH);
@@ -169,26 +164,20 @@ function connectToMcpServer(attempt = 1) {
   tryListen();
 }
 
-function handleMcpMessage(message) {
-  log("Received from MCP:", JSON.stringify(message));
-  
+function handleMcpMessage(clientId, message) {
+  log(`Client ${clientId} →`, JSON.stringify(message));
+
   if (message.type === "tool_request") {
-    // Forward tool request to Chrome extension
     const id = ++requestId;
-    pendingRequests.set(id, message.id); // Map our ID to MCP's ID
-    
-    writeMessage({
-      type: "tool_request",
-      id,
-      tool: message.tool,
-      args: message.args
-    });
+    pendingRequests.set(id, { clientId, mcpId: message.id });
+    writeMessage({ type: "tool_request", id, tool: message.tool, args: message.args });
   }
 }
 
-function sendToMcp(message) {
-  if (mcpSocket && !mcpSocket.destroyed) {
-    mcpSocket.write(JSON.stringify(message) + "\n");
+function sendToClient(clientId, message) {
+  const socket = clients.get(clientId);
+  if (socket && !socket.destroyed) {
+    socket.write(JSON.stringify(message) + "\n");
   }
 }
 
@@ -204,24 +193,25 @@ async function handleChromeMessage(message) {
       writeMessage({ type: "pong" });
       break;
       
-    case "tool_response":
-      // Forward response back to MCP server
-      const mcpId = pendingRequests.get(message.id);
-      if (mcpId !== undefined) {
+    case "tool_response": {
+      const pending = pendingRequests.get(message.id);
+      if (pending) {
         pendingRequests.delete(message.id);
-        sendToMcp({
+        sendToClient(pending.clientId, {
           type: "tool_response",
-          id: mcpId,
+          id: pending.mcpId,
           result: message.result,
           error: message.error
         });
       }
       break;
+    }
       
     case "get_status":
       writeMessage({
         type: "status_response",
-        mcpConnected
+        mcpConnected: clients.size > 0,
+        clientCount: clients.size
       });
       break;
   }

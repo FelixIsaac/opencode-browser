@@ -13,7 +13,7 @@
 
 import { createServer } from "net";
 import { writeFileSync, appendFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
-import { homedir } from "os";
+import { homedir, platform } from "os";
 import { join } from "path";
 
 const LOG_DIR = join(homedir(), ".opencode-browser", "logs");
@@ -32,62 +32,49 @@ log("Native host started");
 // Chrome Native Messaging Protocol
 // ============================================================================
 
+// Byte buffer + message queue — handles partial reads, large messages, and
+// multiple messages arriving in a single chunk.
+let stdinBuffer = Buffer.alloc(0);
+const messageQueue = [];
+let messageWaiter = null;
+
+process.stdin.on("data", (chunk) => {
+  stdinBuffer = Buffer.concat([stdinBuffer, chunk]);
+  while (stdinBuffer.length >= 4) {
+    const len = stdinBuffer.readUInt32LE(0);
+    if (stdinBuffer.length < 4 + len) break;
+    const body = stdinBuffer.subarray(4, 4 + len);
+    stdinBuffer = stdinBuffer.subarray(4 + len);
+    try {
+      const msg = JSON.parse(body.toString("utf8"));
+      if (messageWaiter) {
+        const w = messageWaiter;
+        messageWaiter = null;
+        w.resolve(msg);
+      } else {
+        messageQueue.push(msg);
+      }
+    } catch (e) {
+      log("Failed to parse message:", e.message);
+    }
+  }
+});
+
+process.stdin.on("end", () => {
+  if (messageWaiter) {
+    const w = messageWaiter;
+    messageWaiter = null;
+    w.resolve(null);
+  }
+});
+
 function readMessage() {
   return new Promise((resolve, reject) => {
-    let lengthBuffer = Buffer.alloc(0);
-    let messageBuffer = Buffer.alloc(0);
-    let messageLength = null;
-    
-    const processData = () => {
-      // First, read the 4-byte length prefix
-      if (messageLength === null) {
-        const needed = 4 - lengthBuffer.length;
-        const chunk = process.stdin.read(needed);
-        if (chunk === null) {
-          process.stdin.once("readable", processData);
-          return;
-        }
-        
-        const chunkBuf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        lengthBuffer = Buffer.concat([lengthBuffer, chunkBuf]);
-        
-        if (lengthBuffer.length < 4) {
-          process.stdin.once("readable", processData);
-          return;
-        }
-        
-        messageLength = lengthBuffer.readUInt32LE(0);
-        if (messageLength === 0) {
-          resolve(null);
-          return;
-        }
-      }
-      
-      // Now read the message body
-      const needed = messageLength - messageBuffer.length;
-      const chunk = process.stdin.read(needed);
-      if (chunk === null) {
-        process.stdin.once("readable", processData);
-        return;
-      }
-      
-      const chunkBuf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      messageBuffer = Buffer.concat([messageBuffer, chunkBuf]);
-      
-      if (messageBuffer.length < messageLength) {
-        process.stdin.once("readable", processData);
-        return;
-      }
-      
-      try {
-        const message = JSON.parse(messageBuffer.toString("utf8"));
-        resolve(message);
-      } catch (e) {
-        reject(new Error(`Failed to parse message: ${e.message}`));
-      }
-    };
-    
-    processData();
+    if (messageQueue.length > 0) {
+      resolve(messageQueue.shift());
+    } else {
+      messageWaiter = { resolve, reject };
+    }
   });
 }
 
@@ -105,22 +92,24 @@ function writeMessage(message) {
 // MCP Server Connection
 // ============================================================================
 
-const SOCKET_PATH = join(homedir(), ".opencode-browser", "browser.sock");
+const SOCKET_PATH = platform() === "win32"
+  ? "\\\\.\\pipe\\opencode-browser"
+  : join(homedir(), ".opencode-browser", "browser.sock");
 let mcpConnected = false;
 let mcpSocket = null;
 let pendingRequests = new Map();
 let requestId = 0;
 
-function connectToMcpServer() {
+function connectToMcpServer(attempt = 1) {
   // We'll create a Unix socket server that the MCP server connects to
   // This way the host can receive tool requests from OpenCode
   
-  // Clean up old socket
-  try {
-    if (existsSync(SOCKET_PATH)) {
-      unlinkSync(SOCKET_PATH);
-    }
-  } catch {}
+  // Clean up stale socket (Unix only — named pipes on Windows are auto-cleaned)
+  if (platform() !== "win32") {
+    try {
+      if (existsSync(SOCKET_PATH)) unlinkSync(SOCKET_PATH);
+    } catch {}
+  }
   
   const server = createServer((socket) => {
     log("MCP server connected");
@@ -163,13 +152,21 @@ function connectToMcpServer() {
     });
   });
   
-  server.listen(SOCKET_PATH, () => {
-    log("Listening for MCP connections on", SOCKET_PATH);
-  });
-  
+  const tryListen = () => {
+    server.listen(SOCKET_PATH, () => {
+      log("Listening for MCP connections on", SOCKET_PATH);
+    });
+  };
+
   server.on("error", (err) => {
     log("Server error:", err.message);
+    if (err.code === "EADDRINUSE" && attempt <= 10) {
+      log(`Pipe busy, retrying in 1s (attempt ${attempt}/10)`);
+      setTimeout(() => connectToMcpServer(attempt + 1), 1000);
+    }
   });
+
+  tryListen();
 }
 
 function handleMcpMessage(message) {
@@ -235,9 +232,6 @@ async function handleChromeMessage(message) {
 // ============================================================================
 
 async function main() {
-  // Set stdin to flowing mode
-  process.stdin.setEncoding(null);
-  
   // Start MCP socket server
   connectToMcpServer();
   
@@ -260,11 +254,13 @@ async function main() {
   process.exit(0);
 }
 
-// Handle graceful shutdown
-process.on("SIGTERM", () => {
-  log("Received SIGTERM");
-  process.exit(0);
-});
+// Handle graceful shutdown (SIGTERM not available on Windows)
+if (platform() !== "win32") {
+  process.on("SIGTERM", () => {
+    log("Received SIGTERM");
+    process.exit(0);
+  });
+}
 
 process.on("SIGINT", () => {
   log("Received SIGINT");

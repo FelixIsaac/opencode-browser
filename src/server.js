@@ -13,10 +13,12 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { createConnection } from "net";
-import { homedir } from "os";
+import { homedir, platform } from "os";
 import { join } from "path";
 
-const SOCKET_PATH = join(homedir(), ".opencode-browser", "browser.sock");
+const SOCKET_PATH = platform() === "win32"
+  ? "\\\\.\\pipe\\opencode-browser"
+  : join(homedir(), ".opencode-browser", "browser.sock");
 
 // ============================================================================
 // Socket Connection to Native Host
@@ -28,50 +30,56 @@ let pendingRequests = new Map();
 let requestId = 0;
 let buffer = "";
 
-function connectToHost() {
+function connectToHost(retries = 10, delayMs = 1000) {
   return new Promise((resolve, reject) => {
-    socket = createConnection(SOCKET_PATH);
-    
-    socket.on("connect", () => {
-      console.error("[browser-mcp] Connected to native host");
-      connected = true;
-      resolve();
-    });
-    
-    socket.on("data", (data) => {
-      buffer += data.toString();
-      
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      
-      for (const line of lines) {
-        if (line.trim()) {
-          try {
-            const message = JSON.parse(line);
-            handleHostMessage(message);
-          } catch (e) {
-            console.error("[browser-mcp] Failed to parse:", e.message);
+    const attempt = () => {
+      socket = createConnection(SOCKET_PATH);
+
+      socket.on("connect", () => {
+        console.error("[browser-mcp] Connected to native host");
+        connected = true;
+        resolve();
+      });
+
+      socket.on("data", (data) => {
+        buffer += data.toString();
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              handleHostMessage(JSON.parse(line));
+            } catch (e) {
+              console.error("[browser-mcp] Failed to parse:", e.message);
+            }
           }
         }
-      }
-    });
-    
-    socket.on("close", () => {
-      console.error("[browser-mcp] Disconnected from native host");
-      connected = false;
-      // Reject all pending requests
-      for (const [id, { reject }] of pendingRequests) {
-        reject(new Error("Connection closed"));
-      }
-      pendingRequests.clear();
-    });
-    
-    socket.on("error", (err) => {
-      console.error("[browser-mcp] Socket error:", err.message);
-      if (!connected) {
-        reject(err);
-      }
-    });
+      });
+
+      socket.on("close", () => {
+        console.error("[browser-mcp] Disconnected from native host");
+        connected = false;
+        for (const [, { reject: r }] of pendingRequests) r(new Error("Connection closed"));
+        pendingRequests.clear();
+      });
+
+      socket.on("error", (err) => {
+        console.error("[browser-mcp] Socket error:", err.message);
+        if (!connected) {
+          socket.destroy();
+          if (retries > 0) {
+            console.error(`[browser-mcp] Retrying in ${delayMs}ms (${retries} left)`);
+            setTimeout(() => {
+              retries--;
+              attempt();
+            }, delayMs);
+          } else {
+            reject(err);
+          }
+        }
+      });
+    };
+    attempt();
   });
 }
 

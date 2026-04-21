@@ -304,6 +304,67 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["code"]
         }
+      },
+      {
+        name: "browser_new_tab",
+        description: "Open a new browser tab",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url: {
+              type: "string",
+              description: "URL to open (omit for blank tab)"
+            },
+            active: {
+              type: "boolean",
+              description: "Focus the new tab (default: true)"
+            }
+          }
+        }
+      },
+      {
+        name: "browser_close_tab",
+        description: "Close a browser tab",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tabId: {
+              type: "number",
+              description: "Tab ID to close. Closes active tab if omitted."
+            }
+          }
+        }
+      },
+      {
+        name: "browser_switch_tab",
+        description: "Switch focus to a specific tab",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tabId: {
+              type: "number",
+              description: "Tab ID to switch to"
+            }
+          },
+          required: ["tabId"]
+        }
+      },
+      {
+        name: "browser_new_window",
+        description: "Open a new browser window",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url: {
+              type: "string",
+              description: "URL to open in the new window"
+            },
+            incognito: {
+              type: "boolean",
+              description: "Open as incognito window (default: false)"
+            }
+          }
+        }
       }
     ]
   };
@@ -323,7 +384,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     browser_get_tabs: "get_tabs",
     browser_scroll: "scroll",
     browser_wait: "wait",
-    browser_execute: "execute_script"
+    browser_execute: "execute_script",
+    browser_new_tab: "new_tab",
+    browser_close_tab: "close_tab",
+    browser_switch_tab: "switch_tab",
+    browser_new_window: "new_window"
   };
   
   const internalTool = toolMap[name];

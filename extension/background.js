@@ -151,7 +151,7 @@ async function handleToolRequest(request) {
 
   try {
     // Block tools that touch tab content if the target URL is sensitive
-    const tablessTools = new Set(["get_tabs", "wait"]);
+    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window"]);
     if (!tablessTools.has(tool)) {
       await assertTabAllowed(args?.tabId ?? null);
     }
@@ -191,6 +191,14 @@ async function executeTool(toolName, args) {
       return await toolScroll(args);
     case "wait":
       return await toolWait(args);
+    case "new_tab":
+      return await toolNewTab(args);
+    case "close_tab":
+      return await toolCloseTab(args);
+    case "switch_tab":
+      return await toolSwitchTab(args);
+    case "new_window":
+      return await toolNewWindow(args);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -454,6 +462,46 @@ async function toolScroll({ x = 0, y = 0, selector, tabId }) {
 async function toolWait({ ms = 1000 }) {
   await new Promise(resolve => setTimeout(resolve, ms));
   return `Waited ${ms}ms`;
+}
+
+async function toolNewTab({ url, active = true }) {
+  if (url) await assertUrlAllowed(url);
+  const tab = await chrome.tabs.create({ url: url || "about:blank", active });
+  if (url) {
+    await new Promise((resolve) => {
+      const listener = (tabId, info) => {
+        if (tabId === tab.id && info.status === "complete") {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, 30000);
+    });
+  }
+  const updated = await chrome.tabs.get(tab.id);
+  return JSON.stringify({ tabId: updated.id, url: updated.url, windowId: updated.windowId });
+}
+
+async function toolCloseTab({ tabId }) {
+  const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
+  await chrome.tabs.remove(tab.id);
+  return `Closed tab ${tab.id}`;
+}
+
+async function toolSwitchTab({ tabId }) {
+  if (!tabId) throw new Error("tabId is required");
+  await chrome.tabs.update(tabId, { active: true });
+  const tab = await chrome.tabs.get(tabId);
+  await chrome.windows.update(tab.windowId, { focused: true });
+  return `Switched to tab ${tabId} (${tab.url})`;
+}
+
+async function toolNewWindow({ url, incognito = false }) {
+  if (url) await assertUrlAllowed(url);
+  const win = await chrome.windows.create({ url: url || undefined, incognito, focused: true });
+  const tab = win.tabs?.[0];
+  return JSON.stringify({ windowId: win.id, tabId: tab?.id, url: tab?.url });
 }
 
 // ============================================================================

@@ -10,7 +10,8 @@
     "nativeMessaging",
     "storage",
     "notifications",
-    "alarms"
+    "alarms",
+    "windows"
   ],
   "host_permissions": [
     "<all_urls>"

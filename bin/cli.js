@@ -103,12 +103,12 @@ async function install() {
   header("Step 1: Check Platform");
 
   const os = platform();
-  if (os !== "darwin" && os !== "linux") {
+  if (os !== "darwin" && os !== "linux" && os !== "win32") {
     error(`Unsupported platform: ${os}`);
-    error("OpenCode Browser currently supports macOS and Linux only.");
     process.exit(1);
   }
-  success(`Platform: ${os === "darwin" ? "macOS" : "Linux"}`);
+  const platformName = os === "darwin" ? "macOS" : os === "win32" ? "Windows" : "Linux";
+  success(`Platform: ${platformName}`);
 
   header("Step 2: Install Extension Directory");
 
@@ -151,6 +151,8 @@ To load the extension:
     try {
       if (os === "darwin") {
         execSync('open -a "Google Chrome" "chrome://extensions"', { stdio: "ignore" });
+      } else if (os === "win32") {
+        execSync('start chrome "chrome://extensions"', { stdio: "ignore", shell: true });
       } else {
         execSync('xdg-open "chrome://extensions"', { stdio: "ignore" });
       }
@@ -162,6 +164,8 @@ To load the extension:
     try {
       if (os === "darwin") {
         execSync(`open "${extensionDir}"`, { stdio: "ignore" });
+      } else if (os === "win32") {
+        execSync(`explorer "${extensionDir}"`, { stdio: "ignore", shell: true });
       } else {
         execSync(`xdg-open "${extensionDir}"`, { stdio: "ignore" });
       }
@@ -184,21 +188,19 @@ To load the extension:
 
   header("Step 4: Register Native Messaging Host");
 
-  const nativeHostDir = os === "darwin"
-    ? join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
-    : join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
-
-  mkdirSync(nativeHostDir, { recursive: true });
-
   const nodePath = process.execPath;
   const hostScriptPath = join(PACKAGE_ROOT, "src", "host.js");
-
   const wrapperDir = join(homedir(), ".opencode-browser");
-  const wrapperPath = join(wrapperDir, "host-wrapper.sh");
-  
-  writeFileSync(wrapperPath, `#!/bin/bash
-exec "${nodePath}" "${hostScriptPath}" "$@"
-`, { mode: 0o755 });
+  mkdirSync(wrapperDir, { recursive: true });
+
+  let wrapperPath;
+  if (os === "win32") {
+    wrapperPath = join(wrapperDir, "host-wrapper.cmd");
+    writeFileSync(wrapperPath, `@echo off\r\n"${nodePath}" "${hostScriptPath}" %*\r\n`);
+  } else {
+    wrapperPath = join(wrapperDir, "host-wrapper.sh");
+    writeFileSync(wrapperPath, `#!/bin/bash\nexec "${nodePath}" "${hostScriptPath}" "$@"\n`, { mode: 0o755 });
+  }
 
   const manifest = {
     name: "com.opencode.browser_automation",
@@ -208,10 +210,23 @@ exec "${nodePath}" "${hostScriptPath}" "$@"
     allowed_origins: [`chrome-extension://${extensionId}/`],
   };
 
-  const manifestPath = join(nativeHostDir, "com.opencode.browser_automation.json");
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-
-  success(`Native host registered at: ${manifestPath}`);
+  if (os === "win32") {
+    // On Windows, manifest lives anywhere; Chrome finds it via registry
+    const manifestPath = join(wrapperDir, "com.opencode.browser_automation.json");
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    const regKey = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.opencode.browser_automation";
+    execSync(`REG ADD "${regKey}" /ve /t REG_SZ /d "${manifestPath}" /f`, { stdio: "ignore", shell: true });
+    success(`Native host manifest: ${manifestPath}`);
+    success(`Registry key written: ${regKey}`);
+  } else {
+    const nativeHostDir = os === "darwin"
+      ? join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
+      : join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
+    mkdirSync(nativeHostDir, { recursive: true });
+    const manifestPath = join(nativeHostDir, "com.opencode.browser_automation.json");
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    success(`Native host registered at: ${manifestPath}`);
+  }
 
   const logsDir = join(homedir(), ".opencode-browser", "logs");
   mkdirSync(logsDir, { recursive: true });
@@ -287,24 +302,39 @@ async function uninstall() {
   header("Uninstalling OpenCode Browser");
 
   const os = platform();
-  const nativeHostDir = os === "darwin"
-    ? join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
-    : join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
+  const { unlinkSync } = await import("fs");
 
-  const manifestPath = join(nativeHostDir, "com.opencode.browser_automation.json");
-
-  if (existsSync(manifestPath)) {
-    const { unlinkSync } = await import("fs");
-    unlinkSync(manifestPath);
-    success("Removed native host registration");
+  if (os === "win32") {
+    const manifestPath = join(homedir(), ".opencode-browser", "com.opencode.browser_automation.json");
+    const regKey = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.opencode.browser_automation";
+    try {
+      execSync(`REG DELETE "${regKey}" /f`, { stdio: "ignore", shell: true });
+      success("Removed registry key");
+    } catch {
+      warn("Registry key not found");
+    }
+    if (existsSync(manifestPath)) {
+      unlinkSync(manifestPath);
+      success("Removed native host manifest");
+    }
   } else {
-    warn("Native host manifest not found");
+    const nativeHostDir = os === "darwin"
+      ? join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
+      : join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
+    const manifestPath = join(nativeHostDir, "com.opencode.browser_automation.json");
+    if (existsSync(manifestPath)) {
+      unlinkSync(manifestPath);
+      success("Removed native host registration");
+    } else {
+      warn("Native host manifest not found");
+    }
   }
 
   log(`
-${color("bright", "Note:")} The extension files at ~/.opencode-browser/ were not removed.
-Remove them manually if needed:
-  rm -rf ~/.opencode-browser/
+${color("bright", "Note:")} Extension files at ~/.opencode-browser/ were not removed.
+Remove manually if needed:
+  Windows: rmdir /s /q %USERPROFILE%\\.opencode-browser
+  Unix:    rm -rf ~/.opencode-browser/
 
 Also remove the "browser" entry from your opencode.json.
 `);

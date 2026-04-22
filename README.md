@@ -1,6 +1,6 @@
 # OpenCode Browser
 
-Browser automation for AI agents via Chrome extension + Native Messaging. Works with [OpenCode](https://github.com/opencode-ai/opencode), [Claude Code](https://claude.ai/code), and any MCP-compatible agent.
+Browser automation for AI agents via Chrome extension + Native Messaging. Works with OpenCode, Claude Code, Cursor, Windsurf, Gemini CLI, Codex, and any MCP-compatible agent.
 
 **Inspired by Claude in Chrome** — automation that runs inside your existing Chrome session, sharing your logins, cookies, and bookmarks. No separate profiles, no security prompts.
 
@@ -20,13 +20,28 @@ The installer will:
 1. Copy the extension to `~/.opencode-browser/extension/`
 2. Open Chrome so you can load the unpacked extension
 3. Register the native messaging host (registry on Windows, NativeMessagingHosts dir on macOS/Linux)
-4. Optionally update your `opencode.json` or `~/.claude/.mcp.json`
+4. Optionally update your agent config file
+
+After installation, replace `/path/to/opencode-browser` in the snippets below with the actual path (e.g. `~/.opencode-browser` or wherever you cloned the repo).
 
 ## Agent Setup
 
-### OpenCode
+<details>
+<summary><strong>Claude Code</strong></summary>
 
-Add to `opencode.json`:
+```bash
+claude mcp add -s user browser -- node /path/to/opencode-browser/src/server.js
+```
+
+Adds the server globally — available in every Claude Code session. No restart needed.
+
+</details>
+
+<details>
+<summary><strong>OpenCode</strong></summary>
+
+Add to `opencode.json` (project) or `~/.config/opencode/opencode.json` (global):
+
 ```json
 {
   "mcp": {
@@ -39,15 +54,99 @@ Add to `opencode.json`:
 }
 ```
 
-### Claude Code (global)
+</details>
 
-```bash
-claude mcp add -s user browser -- node /path/to/opencode-browser/src/server.js
+<details>
+<summary><strong>Cursor</strong></summary>
+
+Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
+
+```json
+{
+  "mcpServers": {
+    "browser": {
+      "command": "node",
+      "args": ["/path/to/opencode-browser/src/server.js"]
+    }
+  }
+}
 ```
 
-### Other MCP clients
+Restart Cursor after saving.
 
-Point your client at `src/server.js` as a stdio MCP server. No other configuration needed.
+</details>
+
+<details>
+<summary><strong>Windsurf</strong></summary>
+
+Add to `~/.codeium/windsurf/mcp_config.json` (global) or `.codeium/mcp_config.json` (project):
+
+```json
+{
+  "mcpServers": {
+    "browser": {
+      "command": "node",
+      "args": ["/path/to/opencode-browser/src/server.js"]
+    }
+  }
+}
+```
+
+Restart Windsurf after saving.
+
+</details>
+
+<details>
+<summary><strong>VS Code + GitHub Copilot</strong></summary>
+
+Add to `.vscode/mcp.json` (workspace) or open **MCP: Open User Configuration** from the command palette for global setup:
+
+```json
+{
+  "servers": {
+    "browser": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/path/to/opencode-browser/src/server.js"]
+    }
+  }
+}
+```
+
+Reload the window after saving (`Ctrl+Shift+P` → **Developer: Reload Window**).
+
+</details>
+
+<details>
+<summary><strong>Gemini CLI</strong></summary>
+
+Add to `~/.gemini/settings.json` (global) or `.gemini/settings.json` (project):
+
+```json
+{
+  "mcpServers": {
+    "browser": {
+      "command": "node",
+      "args": ["/path/to/opencode-browser/src/server.js"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Codex CLI (OpenAI)</strong></summary>
+
+Add to `~/.codex/config.toml` (global) or `.codex/config.toml` (project, must be in a trusted directory):
+
+```toml
+[mcp_servers.browser]
+command = "node"
+args = ["/path/to/opencode-browser/src/server.js"]
+```
+
+</details>
 
 ## Available Tools
 
@@ -95,7 +194,7 @@ Agent ──MCP (stdio)──> src/server.js ──Named Pipe──> src/host.js
 - **src/host.js** — Native messaging host; bridges pipe ↔ Chrome
 - **extension/background.js** — Service worker; executes Chrome APIs
 
-Multiple agents (Claude Code + OpenCode) can share one browser session simultaneously.
+Multiple agents can share one browser session simultaneously.
 
 ## Platform Support
 
@@ -108,7 +207,7 @@ Multiple agents (Claude Code + OpenCode) can share one browser session simultane
 ## Uninstall
 
 ```bash
-npx opencode-browser uninstall
+npx @felixisaac/opencode-browser uninstall
 ```
 
 Then remove the extension from Chrome and optionally delete `~/.opencode-browser/`.

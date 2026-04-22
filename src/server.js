@@ -184,7 +184,10 @@ async function executeTool(tool, args) {
 const server = new Server(
   { name: "browser-mcp", version },
   {
-    capabilities: { tools: {} },
+    capabilities: {
+      tools: {},
+      logging: {},
+    },
     instructions: "Browser automation tools for AI agents. Always start with browser_snapshot to read page state before clicking or typing. Use browser_execute sparingly — it runs arbitrary JS with full page trust via chrome.debugger.",
   }
 );
@@ -253,13 +256,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           tabId: { type: "number", description: "Optional tab ID" }
         }
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          url: { type: "string" },
+          title: { type: "string" },
+          nodes: { type: "array", items: { type: "object" } },
+          note: { type: "string" }
+        },
+        required: ["url", "title", "nodes"]
       }
     },
     {
       name: "browser_get_tabs",
       description: "List all open browser tabs",
       annotations: { destructiveHint: false, readOnlyHint: true, idempotentHint: true },
-      inputSchema: { type: "object", properties: {} }
+      inputSchema: { type: "object", properties: {} },
+      outputSchema: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "number" }, url: { type: "string" },
+            title: { type: "string" }, active: { type: "boolean" },
+            windowId: { type: "number" }
+          }
+        }
+      }
     },
     {
       name: "browser_scroll",
@@ -309,6 +333,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           url: { type: "string", description: "URL to open (omit for blank tab)" },
           active: { type: "boolean", description: "Focus the new tab (default: true)" }
         }
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          url: { type: "string" },
+          windowId: { type: "number" }
+        },
+        required: ["tabId", "url", "windowId"]
       }
     },
     {
@@ -383,6 +416,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   ]
 }));
 
+// Tools that emit progress notifications during execution
+const LONG_RUNNING_TOOLS = new Set([
+  "browser_navigate", "browser_wait_for_selector", "browser_execute", "browser_wait"
+]);
+
+// Tools whose text result is also parseable as structuredContent
+const STRUCTURED_OUTPUT_TOOLS = new Set(["browser_get_tabs", "browser_snapshot", "browser_new_tab"]);
+
 // Maps MCP tool names to internal tool names used by background.js
 const TOOL_MAP = {
   browser_navigate:          "navigate",
@@ -402,8 +443,10 @@ const TOOL_MAP = {
   browser_keyboard:          "keyboard",
 };
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args } = request.params;
+  const progressToken = request.params._meta?.progressToken;
+  const signal = extra?.signal;
 
   const internalTool = TOOL_MAP[name];
   if (!internalTool) {
@@ -413,15 +456,52 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 
+  // Honour cancellation before starting
+  if (signal?.aborted) {
+    return { content: [{ type: "text", text: "[CANCELLED] Request was cancelled before execution." }], isError: true };
+  }
+
   try {
     checkRateLimit(name);
+
+    // Emit progress start for long-running tools
+    if (progressToken !== undefined && LONG_RUNNING_TOOLS.has(name)) {
+      await server.notification({
+        method: "notifications/progress",
+        params: { progressToken, progress: 0, total: 100, message: `Running ${name}…` }
+      }).catch(() => {});
+    }
+
     const result = await executeTool(internalTool, args || {});
 
+    // Honour cancellation after execution
+    if (signal?.aborted) {
+      return { content: [{ type: "text", text: "[CANCELLED] Request was cancelled." }], isError: true };
+    }
+
+    // Emit progress complete
+    if (progressToken !== undefined && LONG_RUNNING_TOOLS.has(name)) {
+      await server.notification({
+        method: "notifications/progress",
+        params: { progressToken, progress: 100, total: 100, message: "Done" }
+      }).catch(() => {});
+    }
+
+    // Screenshot → image content
     if (internalTool === "screenshot" && result.startsWith("data:image")) {
       const base64Data = result.replace(/^data:image\/\w+;base64,/, "");
-      return {
-        content: [{ type: "image", data: base64Data, mimeType: "image/png" }]
-      };
+      return { content: [{ type: "image", data: base64Data, mimeType: "image/png" }] };
+    }
+
+    // Structured-output tools: return both text (for LLM) and structuredContent (for clients)
+    if (STRUCTURED_OUTPUT_TOOLS.has(name)) {
+      try {
+        const parsed = JSON.parse(result);
+        return {
+          content: [{ type: "text", text: result }],
+          structuredContent: parsed
+        };
+      } catch {}
     }
 
     return { content: [{ type: "text", text: result }] };

@@ -19,10 +19,12 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "install-extension": "node bin/cli.js install"
+    "install-extension": "node bin/cli.js install",
+    "prepublishOnly": "node --check src/server.js && node --check src/host.js && node --check bin/cli.js"
   },
   "keywords": [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
     "browser",
     "automation",

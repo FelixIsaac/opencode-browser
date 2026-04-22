@@ -471,13 +471,40 @@ async function toolGetTabs() {
   })), null, 2);
 }
 
+// Patterns that indicate network interception or credential API abuse.
+// These are blocked unconditionally — no legitimate agent task requires them.
+const DANGEROUS_CODE_PATTERNS = [
+  { re: /XMLHttpRequest\.prototype\.(open|send|setRequestHeader)\s*=/i, reason: "XHR interception" },
+  { re: /\bfetch\s*=\s*(async\s*)?(function|\(|=>)/i,                  reason: "fetch override" },
+  { re: /navigator\.credentials/i,                                       reason: "Credential Management API" },
+  { re: /navigator\.serviceWorker/i,                                     reason: "service worker registration" },
+];
+
+function assertCodeSafe(code) {
+  for (const { re, reason } of DANGEROUS_CODE_PATTERNS) {
+    if (re.test(code)) {
+      throw new Error(`Blocked: browser_execute refused — code pattern matches "${reason}". This API is not permitted.`);
+    }
+  }
+}
+
 // Serializes debugger access per tab — prevents concurrent attach on the same tab (C1 fix)
 const debuggerQueue = new Map(); // tabId → settled-promise tail
 
 async function toolExecuteScript({ code, tabId }) {
   if (!code) throw new Error("Code is required");
 
+  assertCodeSafe(code);
+
   const tab = await getTabById(tabId);
+
+  // Warn when attaching debugger to a tab outside the agent window — URL
+  // blocklist is the primary defence; this surfaces unexpected scope to logs.
+  const { agentWindowIds = [] } = await chrome.storage.session.get("agentWindowIds").catch(() => ({}));
+  if (!agentWindowIds.includes(tab.windowId)) {
+    console.warn(`[OpenCode] browser_execute on non-agent-window tab ${tab.id} (${tab.url})`);
+  }
+
   const id = tab.id;
 
   const prev = debuggerQueue.get(id) ?? Promise.resolve();

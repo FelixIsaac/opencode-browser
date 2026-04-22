@@ -51,7 +51,7 @@ async function assertUrlAllowed(url) {
 }
 
 async function assertTabAllowed(tabId) {
-  const tab = tabId ? await chrome.tabs.get(tabId) : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+  const tab = tabId ? await chrome.tabs.get(tabId) : await getAgentTab().catch(() => null);
   if (tab?.url) await assertUrlAllowed(tab.url);
 }
 
@@ -218,7 +218,7 @@ async function getActiveTab() {
 
 async function getTabById(tabId) {
   if (tabId) return await chrome.tabs.get(tabId);
-  return await getActiveTab();
+  return await getAgentTab();
 }
 
 /** Wait for a tab to finish loading, with a 30s safety timeout. */
@@ -306,22 +306,39 @@ async function toolType({ selector, text, tabId, clear = false }) {
 }
 
 async function toolScreenshot({ tabId, fullPage = false }) {
-  const tab = await getTabById(tabId);
-
   // LIMIT: captureVisibleTab only captures the ACTIVE tab in a window.
-  // If the requested tab isn't active, focus it first so we capture the right content.
   // LIMIT: throws "The window is not visible" on minimized windows.
   // LIMIT: max image size ~4MB (Chrome internal cap on tab capture).
-  if (!tab.active) {
-    await chrome.tabs.update(tab.id, { active: true });
-    await new Promise(r => setTimeout(r, 150)); // let Chrome composite the frame
+
+  if (tabId) {
+    // Explicit tab — make it active in its own window (may be user's window, explicit request)
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab.active) {
+      await chrome.tabs.update(tab.id, { active: true });
+      await new Promise(r => setTimeout(r, 150));
+    }
+    try {
+      return await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    } catch (err) {
+      if (err.message?.includes("not visible") || err.message?.includes("minimized")) {
+        throw new Error(`Cannot screenshot: window is minimized. Restore it first.`);
+      }
+      throw err;
+    }
   }
 
+  // No tabId — capture agent window without stealing user focus
+  const windowId = await getOrCreateAgentWindow();
+  const win = await chrome.windows.get(windowId);
+  if (win.state === "minimized") {
+    await chrome.windows.update(windowId, { state: "normal" });
+    await new Promise(r => setTimeout(r, 200)); // wait for Chrome to render
+  }
   try {
-    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    return await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
   } catch (err) {
     if (err.message?.includes("not visible") || err.message?.includes("minimized")) {
-      throw new Error(`Cannot screenshot tab ${tab.id}: window is minimized. Restore the window first.`);
+      throw new Error("Cannot screenshot: agent window is not visible.");
     }
     throw err;
   }
@@ -482,7 +499,32 @@ async function toolWait({ ms = 1000 }) {
 }
 
 // Persists across tool calls in this SW lifecycle; reset when SW restarts.
+let agentWindowId = null;
 let agentGroupId = null;
+
+async function getOrCreateAgentWindow() {
+  if (agentWindowId !== null) {
+    try { await chrome.windows.get(agentWindowId); return agentWindowId; } catch {}
+  }
+  // Persist across SW restarts within the same browser session
+  const { savedAgentWindowId } = await chrome.storage.session.get("savedAgentWindowId").catch(() => ({}));
+  if (savedAgentWindowId) {
+    try { await chrome.windows.get(savedAgentWindowId); agentWindowId = savedAgentWindowId; return agentWindowId; } catch {}
+  }
+  // Create new agent window — not focused so user's window stays active
+  const win = await chrome.windows.create({ focused: false, width: 1280, height: 800, type: "normal" });
+  agentWindowId = win.id;
+  agentGroupId = null; // group belongs to old window, reset
+  await chrome.storage.session.set({ savedAgentWindowId: agentWindowId }).catch(() => {});
+  return agentWindowId;
+}
+
+async function getAgentTab() {
+  const windowId = await getOrCreateAgentWindow();
+  const [tab] = await chrome.tabs.query({ windowId, active: true });
+  if (tab) return tab;
+  return await chrome.tabs.create({ windowId, active: true, url: "about:blank" });
+}
 
 async function getOrCreateAgentGroup(tabId) {
   if (agentGroupId !== null) {
@@ -502,7 +544,8 @@ async function getOrCreateAgentGroup(tabId) {
 
 async function toolNewTab({ url, active = false }) {
   if (url) await assertUrlAllowed(url);
-  const tab = await chrome.tabs.create({ url: url || "about:blank", active });
+  const windowId = await getOrCreateAgentWindow();
+  const tab = await chrome.tabs.create({ url: url || "about:blank", active, windowId });
   if (url) await waitForTabLoad(tab.id);
   await getOrCreateAgentGroup(tab.id);
   const updated = await chrome.tabs.get(tab.id);

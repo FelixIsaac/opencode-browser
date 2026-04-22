@@ -1,11 +1,19 @@
 {
-  "name": "opencode-browser",
+  "name": "@felixisaac/opencode-browser",
   "version": "1.0.0",
-  "description": "Browser automation for OpenCode via Chrome extension + Native Messaging. Inspired by Claude in Chrome.",
+  "description": "Browser automation for AI agents via Chrome extension + Native Messaging. Works with OpenCode, Claude Code, and any MCP-compatible agent.",
   "type": "module",
   "bin": {
     "opencode-browser": "./bin/cli.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "extension/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md"
+  ],
   "engines": {
     "node": ">=18"
   },

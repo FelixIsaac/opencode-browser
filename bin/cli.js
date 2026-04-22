@@ -88,8 +88,8 @@ ${color("cyan", color("bright", "╚══════════════�
   } else {
     log(`
 ${color("bright", "Usage:")}
-  npx opencode-browser install     Install extension and native host
-  npx opencode-browser uninstall   Remove native host registration
+  npx @felixisaac/opencode-browser install     Install extension and native host
+  npx @felixisaac/opencode-browser uninstall   Remove native host registration
 
 ${color("bright", "After installation:")}
   The MCP server starts automatically when OpenCode connects.

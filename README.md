@@ -13,7 +13,7 @@ Chrome 136+ blocks `--remote-debugging-port` on your default profile. DevTools-b
 ## Installation
 
 ```bash
-npx opencode-browser install
+npx @felixisaac/opencode-browser install
 ```
 
 The installer will:

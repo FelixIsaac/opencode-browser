@@ -6,7 +6,9 @@
   "bin": {
     "opencode-browser": "./bin/cli.js"
   },
-  "main": "./src/server.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node src/server.js",
     "install-extension": "node bin/cli.js install"
@@ -30,6 +32,6 @@
   },
   "homepage": "https://github.com/benjaminshafii/opencode-browser#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "~1.29.0"
   }
 }

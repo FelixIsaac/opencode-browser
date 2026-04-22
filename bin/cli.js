@@ -6,7 +6,7 @@
  */
 
 import { createInterface } from "readline";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { homedir, platform } from "os";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -102,12 +102,12 @@ ${color("bright", "After installation:")}
 async function install() {
   header("Step 1: Check Platform");
 
-  const os = platform();
-  if (os !== "darwin" && os !== "linux" && os !== "win32") {
-    error(`Unsupported platform: ${os}`);
+  const currentPlatform = platform();
+  if (currentPlatform !== "darwin" && currentPlatform !== "linux" && currentPlatform !== "win32") {
+    error(`Unsupported platform: ${currentPlatform}`);
     process.exit(1);
   }
-  const platformName = os === "darwin" ? "macOS" : os === "win32" ? "Windows" : "Linux";
+  const platformName = currentPlatform === "darwin" ? "macOS" : currentPlatform === "win32" ? "Windows" : "Linux";
   success(`Platform: ${platformName}`);
 
   header("Step 2: Install Extension Directory");
@@ -121,11 +121,9 @@ async function install() {
   for (const file of files) {
     const srcPath = join(srcExtensionDir, file);
     const destPath = join(extensionDir, file);
-    
-    try {
-      const stat = readdirSync(srcPath);
+    if (statSync(srcPath).isDirectory()) {
       mkdirSync(destPath, { recursive: true });
-    } catch {
+    } else {
       mkdirSync(dirname(destPath), { recursive: true });
       copyFileSync(srcPath, destPath);
     }
@@ -149,9 +147,9 @@ To load the extension:
   const openChrome = await confirm("Open Chrome extensions page now?");
   if (openChrome) {
     try {
-      if (os === "darwin") {
+      if (currentPlatform === "darwin") {
         execSync('open -a "Google Chrome" "chrome://extensions"', { stdio: "ignore" });
-      } else if (os === "win32") {
+      } else if (currentPlatform === "win32") {
         execSync('start chrome "chrome://extensions"', { stdio: "ignore", shell: true });
       } else {
         execSync('xdg-open "chrome://extensions"', { stdio: "ignore" });
@@ -162,9 +160,9 @@ To load the extension:
   const openFinder = await confirm("Open extension folder in file manager?");
   if (openFinder) {
     try {
-      if (os === "darwin") {
+      if (currentPlatform === "darwin") {
         execSync(`open "${extensionDir}"`, { stdio: "ignore" });
-      } else if (os === "win32") {
+      } else if (currentPlatform === "win32") {
         execSync(`explorer "${extensionDir}"`, { stdio: "ignore", shell: true });
       } else {
         execSync(`xdg-open "${extensionDir}"`, { stdio: "ignore" });
@@ -194,7 +192,7 @@ To load the extension:
   mkdirSync(wrapperDir, { recursive: true });
 
   let wrapperPath;
-  if (os === "win32") {
+  if (currentPlatform === "win32") {
     wrapperPath = join(wrapperDir, "host-wrapper.cmd");
     writeFileSync(wrapperPath, `@echo off\r\n"${nodePath}" "${hostScriptPath}" %*\r\n`);
   } else {
@@ -210,7 +208,7 @@ To load the extension:
     allowed_origins: [`chrome-extension://${extensionId}/`],
   };
 
-  if (os === "win32") {
+  if (currentPlatform === "win32") {
     // On Windows, manifest lives anywhere; Chrome finds it via registry
     const manifestPath = join(wrapperDir, "com.opencode.browser_automation.json");
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
@@ -219,7 +217,7 @@ To load the extension:
     success(`Native host manifest: ${manifestPath}`);
     success(`Registry key written: ${regKey}`);
   } else {
-    const nativeHostDir = os === "darwin"
+    const nativeHostDir = currentPlatform === "darwin"
       ? join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
       : join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
     mkdirSync(nativeHostDir, { recursive: true });
@@ -301,10 +299,9 @@ ${color("bright", "Logs:")} ~/.opencode-browser/logs/
 async function uninstall() {
   header("Uninstalling OpenCode Browser");
 
-  const os = platform();
-  const { unlinkSync } = await import("fs");
+  const currentPlatform = platform();
 
-  if (os === "win32") {
+  if (currentPlatform === "win32") {
     const manifestPath = join(homedir(), ".opencode-browser", "com.opencode.browser_automation.json");
     const regKey = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.opencode.browser_automation";
     try {
@@ -318,7 +315,7 @@ async function uninstall() {
       success("Removed native host manifest");
     }
   } else {
-    const nativeHostDir = os === "darwin"
+    const nativeHostDir = currentPlatform === "darwin"
       ? join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
       : join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
     const manifestPath = join(nativeHostDir, "com.opencode.browser_automation.json");

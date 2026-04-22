@@ -29,19 +29,30 @@ let connected = false;
 let pendingRequests = new Map();
 let requestId = 0;
 let buffer = "";
+let connectingPromise = null; // deduplicates concurrent connectToHost() calls
 
 function connectToHost(retries = 10, delayMs = 1000) {
-  return new Promise((resolve, reject) => {
-    const attempt = () => {
-      socket = createConnection(SOCKET_PATH);
+  // Return the in-flight promise so concurrent callers share one attempt
+  // instead of each spawning a socket and racing to overwrite `socket`.
+  if (connectingPromise) return connectingPromise;
+  connectingPromise = _doConnect(retries, delayMs).finally(() => { connectingPromise = null; });
+  return connectingPromise;
+}
 
-      socket.on("connect", () => {
+function _doConnect(retries, delayMs) {
+  return new Promise((resolve, reject) => {
+    const attempt = (retriesLeft) => {
+      const sock = createConnection(SOCKET_PATH);
+
+      sock.on("connect", () => {
         console.error("[browser-mcp] Connected to native host");
+        socket = sock;
+        buffer = ""; // reset any partial data from a previous connection
         connected = true;
         resolve();
       });
 
-      socket.on("data", (data) => {
+      sock.on("data", (data) => {
         buffer += data.toString();
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
@@ -56,30 +67,27 @@ function connectToHost(retries = 10, delayMs = 1000) {
         }
       });
 
-      socket.on("close", () => {
+      sock.on("close", () => {
         console.error("[browser-mcp] Disconnected from native host");
         connected = false;
         for (const [, { reject: r }] of pendingRequests) r(new Error("Connection closed"));
         pendingRequests.clear();
       });
 
-      socket.on("error", (err) => {
+      sock.on("error", (err) => {
         console.error("[browser-mcp] Socket error:", err.message);
         if (!connected) {
-          socket.destroy();
-          if (retries > 0) {
-            console.error(`[browser-mcp] Retrying in ${delayMs}ms (${retries} left)`);
-            setTimeout(() => {
-              retries--;
-              attempt();
-            }, delayMs);
+          sock.destroy();
+          if (retriesLeft > 0) {
+            console.error(`[browser-mcp] Retrying in ${delayMs}ms (${retriesLeft} left)`);
+            setTimeout(() => attempt(retriesLeft - 1), delayMs);
           } else {
             reject(err);
           }
         }
       });
     };
-    attempt();
+    attempt(retries);
   });
 }
 
@@ -376,28 +384,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
+// Maps MCP tool names (as seen by agents) to internal tool names (used by background.js)
+const TOOL_MAP = {
+  browser_navigate:   "navigate",
+  browser_click:      "click",
+  browser_type:       "type",
+  browser_screenshot: "screenshot",
+  browser_snapshot:   "snapshot",
+  browser_get_tabs:   "get_tabs",
+  browser_scroll:     "scroll",
+  browser_wait:       "wait",
+  browser_execute:    "execute_script",
+  browser_new_tab:    "new_tab",
+  browser_close_tab:  "close_tab",
+  browser_switch_tab: "switch_tab",
+  browser_new_window: "new_window",
+};
+
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  
-  // Map MCP tool names to internal tool names
-  const toolMap = {
-    browser_navigate: "navigate",
-    browser_click: "click",
-    browser_type: "type",
-    browser_screenshot: "screenshot",
-    browser_snapshot: "snapshot",
-    browser_get_tabs: "get_tabs",
-    browser_scroll: "scroll",
-    browser_wait: "wait",
-    browser_execute: "execute_script",
-    browser_new_tab: "new_tab",
-    browser_close_tab: "close_tab",
-    browser_switch_tab: "switch_tab",
-    browser_new_window: "new_window"
-  };
-  
-  const internalTool = toolMap[name];
+  const internalTool = TOOL_MAP[name];
   if (!internalTool) {
     return {
       content: [{ type: "text", text: `Unknown tool: ${name}` }],

@@ -23,13 +23,18 @@ const DEFAULT_BLOCKED_PATTERNS = [
   /coinbase\.com/i, /binance\.com/i, /kraken\.com/i,
 ];
 
+// Cached compiled patterns — invalidated when storage changes.
+// LIMIT: chrome.storage.local max size = 10MB total, 8KB per item.
+let cachedPatterns = null;
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.customBlocklist) cachedPatterns = null;
+});
+
 async function getBlockedPatterns() {
-  // PERF: chrome.storage.local.get is an async IPC call (~1-5ms each).
-  // Called on every non-tabless tool invocation. Also rebuilds RegExp objects
-  // on every call — consider caching patterns and invalidating on storage change.
-  // LIMIT: chrome.storage.local max size = 10MB total, 8KB per item.
+  if (cachedPatterns) return cachedPatterns;
   const { customBlocklist = [] } = await chrome.storage.local.get("customBlocklist");
-  return [...DEFAULT_BLOCKED_PATTERNS, ...customBlocklist.map(p => new RegExp(p, "i"))];
+  cachedPatterns = [...DEFAULT_BLOCKED_PATTERNS, ...customBlocklist.map(p => new RegExp(p, "i"))];
+  return cachedPatterns;
 }
 
 async function assertUrlAllowed(url) {
@@ -51,57 +56,55 @@ async function assertTabAllowed(tabId) {
 }
 
 let nativePort = null;
-let isConnected = false;
+let connectingPromise = null; // deduplicates concurrent connectToNativeHost() calls
 
 // ============================================================================
 // Native Messaging Connection
 // ============================================================================
 
-async function connectToNativeHost() {
-  if (nativePort) {
-    return true;
-  }
+function connectToNativeHost() {
+  if (nativePort) return Promise.resolve(true);
+  // Return the in-flight promise so concurrent callers share one attempt
+  // instead of each spawning a native port and leaking the first.
+  if (connectingPromise) return connectingPromise;
+  connectingPromise = _doConnect().finally(() => { connectingPromise = null; });
+  return connectingPromise;
+}
 
+async function _doConnect() {
   try {
-    nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
-    
-    nativePort.onMessage.addListener(handleNativeMessage);
-    
-    nativePort.onDisconnect.addListener(() => {
+    const port = chrome.runtime.connectNative(NATIVE_HOST_NAME);
+
+    port.onMessage.addListener(handleNativeMessage);
+    port.onDisconnect.addListener(() => {
       const error = chrome.runtime.lastError?.message;
       console.log("[OpenCode] Native host disconnected:", error);
       nativePort = null;
-      isConnected = false;
     });
 
-    // Ping to verify connection
     const connected = await new Promise((resolve) => {
       const timeout = setTimeout(() => resolve(false), 5000);
-      
       const pingHandler = (msg) => {
         if (msg.type === "pong") {
           clearTimeout(timeout);
-          nativePort.onMessage.removeListener(pingHandler);
+          port.onMessage.removeListener(pingHandler);
           resolve(true);
         }
       };
-      
-      nativePort.onMessage.addListener(pingHandler);
-      nativePort.postMessage({ type: "ping" });
+      port.onMessage.addListener(pingHandler);
+      port.postMessage({ type: "ping" });
     });
 
     if (connected) {
-      isConnected = true;
+      nativePort = port;
       console.log("[OpenCode] Connected to native host");
       return true;
     } else {
-      nativePort.disconnect();
-      nativePort = null;
+      port.disconnect();
       return false;
     }
   } catch (error) {
     console.error("[OpenCode] Failed to connect:", error);
-    nativePort = null;
     return false;
   }
 }
@@ -110,7 +113,6 @@ function disconnectNativeHost() {
   if (nativePort) {
     nativePort.disconnect();
     nativePort = null;
-    isConnected = false;
   }
 }
 
@@ -129,9 +131,9 @@ async function handleNativeMessage(message) {
       sendToNative({ type: "pong" });
       break;
     case "get_status":
-      sendToNative({ 
-        type: "status_response", 
-        connected: isConnected,
+      sendToNative({
+        type: "status_response",
+        connected: nativePort !== null,
         version: chrome.runtime.getManifest().version
       });
       break;
@@ -180,37 +182,26 @@ async function handleToolRequest(request) {
   }
 }
 
+const TOOL_HANDLERS = {
+  navigate:       toolNavigate,
+  click:          toolClick,
+  type:           toolType,
+  screenshot:     toolScreenshot,
+  snapshot:       toolSnapshot,
+  get_tabs:       toolGetTabs,
+  execute_script: toolExecuteScript,
+  scroll:         toolScroll,
+  wait:           toolWait,
+  new_tab:        toolNewTab,
+  close_tab:      toolCloseTab,
+  switch_tab:     toolSwitchTab,
+  new_window:     toolNewWindow,
+};
+
 async function executeTool(toolName, args) {
-  switch (toolName) {
-    case "navigate":
-      return await toolNavigate(args);
-    case "click":
-      return await toolClick(args);
-    case "type":
-      return await toolType(args);
-    case "screenshot":
-      return await toolScreenshot(args);
-    case "snapshot":
-      return await toolSnapshot(args);
-    case "get_tabs":
-      return await toolGetTabs(args);
-    case "execute_script":
-      return await toolExecuteScript(args);
-    case "scroll":
-      return await toolScroll(args);
-    case "wait":
-      return await toolWait(args);
-    case "new_tab":
-      return await toolNewTab(args);
-    case "close_tab":
-      return await toolCloseTab(args);
-    case "switch_tab":
-      return await toolSwitchTab(args);
-    case "new_window":
-      return await toolNewWindow(args);
-    default:
-      throw new Error(`Unknown tool: ${toolName}`);
-  }
+  const handler = TOOL_HANDLERS[toolName];
+  if (!handler) throw new Error(`Unknown tool: ${toolName}`);
+  return await handler(args);
 }
 
 // ============================================================================
@@ -224,35 +215,30 @@ async function getActiveTab() {
 }
 
 async function getTabById(tabId) {
-  if (tabId) {
-    return await chrome.tabs.get(tabId);
-  }
+  if (tabId) return await chrome.tabs.get(tabId);
   return await getActiveTab();
 }
 
-async function toolNavigate({ url, tabId }) {
-  if (!url) throw new Error("URL is required");
-  await assertUrlAllowed(url);
-  
-  const tab = await getTabById(tabId);
-  await chrome.tabs.update(tab.id, { url });
-  
-  // Wait for page to load
-  await new Promise((resolve) => {
+/** Wait for a tab to finish loading, with a 30s safety timeout. */
+function waitForTabLoad(tabId) {
+  return new Promise((resolve) => {
     const listener = (updatedTabId, info) => {
-      if (updatedTabId === tab.id && info.status === "complete") {
+      if (updatedTabId === tabId && info.status === "complete") {
         chrome.tabs.onUpdated.removeListener(listener);
         resolve();
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
-    // Timeout after 30 seconds
-    setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      resolve();
-    }, 30000);
+    setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, 30000);
   });
-  
+}
+
+async function toolNavigate({ url, tabId }) {
+  if (!url) throw new Error("URL is required");
+  await assertUrlAllowed(url);
+  const tab = await getTabById(tabId);
+  await chrome.tabs.update(tab.id, { url });
+  await waitForTabLoad(tab.id);
   return `Navigated to ${url}`;
 }
 
@@ -320,15 +306,23 @@ async function toolType({ selector, text, tabId, clear = false }) {
 async function toolScreenshot({ tabId, fullPage = false }) {
   const tab = await getTabById(tabId);
 
-  // LIMIT: captureVisibleTab captures whatever tab is currently ACTIVE in the window,
-  // not necessarily the requested tab. If tab is not focused, screenshot is wrong/silent.
-  // Throws "The window is not visible" on minimized windows — not currently handled.
+  // LIMIT: captureVisibleTab only captures the ACTIVE tab in a window.
+  // If the requested tab isn't active, focus it first so we capture the right content.
+  // LIMIT: throws "The window is not visible" on minimized windows.
   // LIMIT: max image size ~4MB (Chrome internal cap on tab capture).
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-    format: "png"
-  });
-  
-  return dataUrl;
+  if (!tab.active) {
+    await chrome.tabs.update(tab.id, { active: true });
+    await new Promise(r => setTimeout(r, 150)); // let Chrome composite the frame
+  }
+
+  try {
+    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+  } catch (err) {
+    if (err.message?.includes("not visible") || err.message?.includes("minimized")) {
+      throw new Error(`Cannot screenshot tab ${tab.id}: window is minimized. Restore the window first.`);
+    }
+    throw err;
+  }
 }
 
 async function toolSnapshot({ tabId }) {
@@ -488,18 +482,7 @@ async function toolWait({ ms = 1000 }) {
 async function toolNewTab({ url, active = true }) {
   if (url) await assertUrlAllowed(url);
   const tab = await chrome.tabs.create({ url: url || "about:blank", active });
-  if (url) {
-    await new Promise((resolve) => {
-      const listener = (tabId, info) => {
-        if (tabId === tab.id && info.status === "complete") {
-          chrome.tabs.onUpdated.removeListener(listener);
-          resolve();
-        }
-      };
-      chrome.tabs.onUpdated.addListener(listener);
-      setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, 30000);
-    });
-  }
+  if (url) await waitForTabLoad(tab.id);
   const updated = await chrome.tabs.get(tab.id);
   return JSON.stringify({ tabId: updated.id, url: updated.url, windowId: updated.windowId });
 }
@@ -541,23 +524,14 @@ chrome.runtime.onStartup.addListener(async () => {
 
 // Auto-reconnect on action click
 chrome.action.onClicked.addListener(async () => {
-  if (!isConnected) {
+  if (!nativePort) {
     const connected = await connectToNativeHost();
-    if (connected) {
-      chrome.notifications.create({
-        type: "basic",
-        iconUrl: "icons/icon128.png",
-        title: "OpenCode Browser",
-        message: "Connected to native host"
-      });
-    } else {
-      chrome.notifications.create({
-        type: "basic",
-        iconUrl: "icons/icon128.png",
-        title: "OpenCode Browser",
-        message: "Failed to connect. Is the native host installed?"
-      });
-    }
+    chrome.notifications.create({
+      type: "basic",
+      iconUrl: "icons/icon128.png",
+      title: "OpenCode Browser",
+      message: connected ? "Connected to native host" : "Failed to connect. Is the native host installed?"
+    });
   } else {
     chrome.notifications.create({
       type: "basic",
@@ -577,11 +551,10 @@ chrome.action.onClicked.addListener(async () => {
 chrome.alarms.create("opencode-keepalive", { periodInMinutes: 0.25 });
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== "opencode-keepalive") return;
-  if (!isConnected) {
-    // WARNING: no re-entrancy guard — two rapid alarm fires both seeing isConnected===false
-    // will each call connectNative(), leaking the first port and its onMessage listener.
+  if (!nativePort) {
+    // connectToNativeHost is now re-entrancy-safe: concurrent calls share one attempt.
     await connectToNativeHost();
-  } else if (nativePort) {
+  } else {
     // Pings are fire-and-forget; unanswered pings queue silently in the native messaging
     // buffer (max message size 1MB per Chrome docs). No pong timeout means a hung host
     // accumulates queued pings until the port errors and disconnects.

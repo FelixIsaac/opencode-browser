@@ -12,13 +12,36 @@
  */
 
 import { createServer } from "net";
-import { writeFileSync, appendFileSync, existsSync, mkdirSync, unlinkSync, chmodSync } from "fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, unlinkSync, chmodSync } from "fs";
+import { randomBytes } from "crypto";
 import { homedir, platform } from "os";
 import { join } from "path";
 
-const LOG_DIR = join(homedir(), ".opencode-browser", "logs");
+const BASE_DIR = join(homedir(), ".opencode-browser");
+const LOG_DIR = join(BASE_DIR, "logs");
 if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
 const LOG_FILE = join(LOG_DIR, "host.log");
+
+// ============================================================================
+// Auth Token — shared secret between host and MCP server
+// ============================================================================
+
+const TOKEN_PATH = join(BASE_DIR, "auth.token");
+
+function loadOrCreateToken() {
+  if (existsSync(TOKEN_PATH)) {
+    try {
+      const t = readFileSync(TOKEN_PATH, "utf8").trim();
+      if (/^[0-9a-f]{64}$/.test(t)) return t;
+    } catch {}
+  }
+  const token = randomBytes(32).toString("hex");
+  writeFileSync(TOKEN_PATH, token, { encoding: "utf8", mode: 0o600 });
+  try { chmodSync(TOKEN_PATH, 0o600); } catch {}
+  return token;
+}
+
+const AUTH_TOKEN = loadOrCreateToken();
 
 function log(...args) {
   const timestamp = new Date().toISOString();
@@ -131,10 +154,15 @@ function connectToMcpServer(attempt = 1) {
 
   const server = createServer((socket) => {
     const clientId = ++nextClientId;
-    clients.set(clientId, socket);
-    log(`MCP client ${clientId} connected (total: ${clients.size})`);
+    let authenticated = false;
 
-    if (clients.size === 1) writeMessage({ type: "mcp_connected" });
+    // Disconnect unauthenticated clients after 5 seconds
+    const authTimeout = setTimeout(() => {
+      if (!authenticated) {
+        log(`Client ${clientId}: auth timeout — disconnecting`);
+        socket.destroy();
+      }
+    }, 5000);
 
     let buffer = "";
     socket.on("data", (data) => {
@@ -142,20 +170,37 @@ function connectToMcpServer(attempt = 1) {
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
       for (const line of lines) {
-        if (line.trim()) {
-          try {
-            handleMcpMessage(clientId, JSON.parse(line));
-          } catch (e) {
-            log("Failed to parse MCP message:", e.message);
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (!authenticated) {
+            // First message must be { type: "auth", token: "<AUTH_TOKEN>" }
+            if (msg.type === "auth" && msg.token === AUTH_TOKEN) {
+              authenticated = true;
+              clearTimeout(authTimeout);
+              clients.set(clientId, socket);
+              log(`MCP client ${clientId} authenticated (total: ${clients.size})`);
+              if (clients.size === 1) writeMessage({ type: "mcp_connected" });
+            } else {
+              log(`Client ${clientId}: auth failed — disconnecting`);
+              socket.destroy();
+            }
+            continue;
           }
+          handleMcpMessage(clientId, msg);
+        } catch (e) {
+          log("Failed to parse MCP message:", e.message);
         }
       }
     });
 
     socket.on("close", () => {
-      clients.delete(clientId);
-      log(`MCP client ${clientId} disconnected (total: ${clients.size})`);
-      if (clients.size === 0) writeMessage({ type: "mcp_disconnected" });
+      clearTimeout(authTimeout);
+      if (authenticated) {
+        clients.delete(clientId);
+        log(`MCP client ${clientId} disconnected (total: ${clients.size})`);
+        if (clients.size === 0) writeMessage({ type: "mcp_disconnected" });
+      }
     });
 
     socket.on("error", (err) => {

@@ -13,12 +13,23 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { createConnection } from "net";
+import { readFileSync } from "fs";
 import { homedir, platform } from "os";
 import { join } from "path";
 
+const BASE_DIR = join(homedir(), ".opencode-browser");
 const SOCKET_PATH = platform() === "win32"
   ? "\\\\.\\pipe\\opencode-browser"
-  : join(homedir(), ".opencode-browser", "browser.sock");
+  : join(BASE_DIR, "browser.sock");
+const TOKEN_PATH = join(BASE_DIR, "auth.token");
+
+function loadToken() {
+  try {
+    const t = readFileSync(TOKEN_PATH, "utf8").trim();
+    if (/^[0-9a-f]{64}$/.test(t)) return t;
+  } catch {}
+  throw new Error(`Cannot read auth token from ${TOKEN_PATH}. Is the browser extension running?`);
+}
 
 // ============================================================================
 // Socket Connection to Native Host
@@ -45,6 +56,8 @@ function _doConnect(retries, delayMs) {
       const sock = createConnection(SOCKET_PATH);
 
       sock.on("connect", () => {
+        // Send auth token as first message before any tool requests
+        sock.write(JSON.stringify({ type: "auth", token: loadToken() }) + "\n");
         console.error("[browser-mcp] Connected to native host");
         socket = sock;
         buffer = ""; // reset any partial data from a previous connection

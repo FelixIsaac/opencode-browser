@@ -28,6 +28,24 @@ browser_keyboard(key="Enter")
 ```
 For text selection before overwriting: `browser_keyboard(key="a", modifiers=["ctrl"])`.
 
+## UX Contract — Non-Interference
+
+The user is browsing while you work. Treat their session as read-only except for the specific task they gave you.
+
+**Do:**
+- Open new tabs with `browser_new_tab` (goes to the agent window)
+- Navigate, click, type only within tabs you opened
+- Tell the user in chat what you're doing: *"Opening GitHub, searching for issues…"*
+- Close tabs you opened when the task is done (`browser_close_tab`)
+- Let the user know when you're finished so they can resume normally
+
+**Don't:**
+- Open more tabs than the task requires — one tab per site, reuse with `browser_navigate`
+- Leave agent tabs open after the task completes
+- Call `browser_switch_tab` on a user's tab unless they asked for a hand-off
+- Screenshot repeatedly in a loop — snapshot first, screenshot only when visual layout matters
+- Navigate away from a URL the user opened without warning them
+
 ## Tab Management
 
 - **New tabs** always open in the agent window — do not interfere with the user's tabs

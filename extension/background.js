@@ -537,7 +537,7 @@ async function toolScroll({ x = 0, y = 0, selector, tabId }) {
       window.scrollBy(scrollX, scrollY);
       return { found: null };
     },
-    args: [x, y, selector]
+    args: [x, y, selector ?? null]
   });
 
   const sr = scrollResult[0]?.result;

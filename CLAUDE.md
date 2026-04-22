@@ -4,25 +4,11 @@ See [AGENTS.md](./AGENTS.md) for full agent behavioral guidance.
 
 ## Quick Setup (Claude Code global)
 
-Add to `~/.claude/.mcp.json`:
-```json
-{
-  "mcpServers": {
-    "browser": {
-      "command": "node",
-      "args": ["/path/to/opencode-browser/src/server.js"],
-      "type": "stdio"
-    }
-  }
-}
+```bash
+claude mcp add -s user browser -- node /path/to/opencode-browser/src/server.js
 ```
 
-Then approve in `~/.claude/settings.json`:
-```json
-{
-  "enabledMcpjsonServers": ["browser"]
-}
-```
+That's it — available in every Claude Code session.
 
 ## Key Reminders
 - `browser_snapshot` before `browser_screenshot` — saves tokens

@@ -41,24 +41,8 @@ Add to `opencode.json`:
 
 ### Claude Code (global)
 
-Create `~/.claude/.mcp.json`:
-```json
-{
-  "mcpServers": {
-    "browser": {
-      "command": "node",
-      "args": ["/path/to/opencode-browser/src/server.js"],
-      "type": "stdio"
-    }
-  }
-}
-```
-
-Add to `~/.claude/settings.json`:
-```json
-{
-  "enabledMcpjsonServers": ["browser"]
-}
+```bash
+claude mcp add -s user browser -- node /path/to/opencode-browser/src/server.js
 ```
 
 ### Other MCP clients

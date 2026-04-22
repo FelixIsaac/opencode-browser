@@ -369,15 +369,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            url: {
-              type: "string",
-              description: "URL to open in the new window"
-            },
-            incognito: {
-              type: "boolean",
-              description: "Open as incognito window (default: false)"
-            }
+            url: { type: "string", description: "URL to open in the new window" },
+            incognito: { type: "boolean", description: "Open as incognito window (default: false)" }
           }
+        }
+      },
+      {
+        name: "browser_wait_for_selector",
+        description: "Wait until a CSS selector appears in the DOM (useful for SPAs and dynamic pages)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            selector: { type: "string", description: "CSS selector to wait for" },
+            timeout: { type: "number", description: "Max wait in ms (default: 10000)" },
+            tabId: { type: "number", description: "Optional tab ID" }
+          },
+          required: ["selector"]
+        }
+      },
+      {
+        name: "browser_keyboard",
+        description: "Send a keyboard event to a tab (e.g. Enter, Escape, Tab, ctrl+a)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            key: { type: "string", description: "Key name (e.g. Enter, Escape, Tab, a, ArrowDown)" },
+            selector: { type: "string", description: "CSS selector of target element (omit to use active element)" },
+            modifiers: {
+              type: "array",
+              items: { type: "string", enum: ["ctrl", "shift", "alt", "meta"] },
+              description: "Modifier keys to hold"
+            },
+            tabId: { type: "number", description: "Optional tab ID" }
+          },
+          required: ["key"]
         }
       }
     ]
@@ -395,10 +420,12 @@ const TOOL_MAP = {
   browser_scroll:     "scroll",
   browser_wait:       "wait",
   browser_execute:    "execute_script",
-  browser_new_tab:    "new_tab",
-  browser_close_tab:  "close_tab",
-  browser_switch_tab: "switch_tab",
-  browser_new_window: "new_window",
+  browser_new_tab:            "new_tab",
+  browser_close_tab:          "close_tab",
+  browser_switch_tab:         "switch_tab",
+  browser_new_window:         "new_window",
+  browser_wait_for_selector:  "wait_for_selector",
+  browser_keyboard:           "keyboard",
 };
 
 // Handle tool calls

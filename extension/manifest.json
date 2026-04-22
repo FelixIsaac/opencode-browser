@@ -11,7 +11,8 @@
     "storage",
     "notifications",
     "alarms",
-    "windows"
+    "windows",
+    "tabGroups"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -192,10 +192,12 @@ const TOOL_HANDLERS = {
   execute_script: toolExecuteScript,
   scroll:         toolScroll,
   wait:           toolWait,
-  new_tab:        toolNewTab,
-  close_tab:      toolCloseTab,
-  switch_tab:     toolSwitchTab,
-  new_window:     toolNewWindow,
+  new_tab:              toolNewTab,
+  close_tab:            toolCloseTab,
+  switch_tab:           toolSwitchTab,
+  new_window:           toolNewWindow,
+  wait_for_selector:    toolWaitForSelector,
+  keyboard:             toolKeyboard,
 };
 
 async function executeTool(toolName, args) {
@@ -479,10 +481,30 @@ async function toolWait({ ms = 1000 }) {
   return `Waited ${ms}ms`;
 }
 
-async function toolNewTab({ url, active = true }) {
+// Persists across tool calls in this SW lifecycle; reset when SW restarts.
+let agentGroupId = null;
+
+async function getOrCreateAgentGroup(tabId) {
+  if (agentGroupId !== null) {
+    try {
+      await chrome.tabGroups.get(agentGroupId);
+      await chrome.tabs.group({ tabIds: [tabId], groupId: agentGroupId });
+      return agentGroupId;
+    } catch {
+      agentGroupId = null; // group was closed
+    }
+  }
+  const groupId = await chrome.tabs.group({ tabIds: [tabId] });
+  await chrome.tabGroups.update(groupId, { title: "OpenCode Agent", color: "cyan" });
+  agentGroupId = groupId;
+  return groupId;
+}
+
+async function toolNewTab({ url, active = false }) {
   if (url) await assertUrlAllowed(url);
   const tab = await chrome.tabs.create({ url: url || "about:blank", active });
   if (url) await waitForTabLoad(tab.id);
+  await getOrCreateAgentGroup(tab.id);
   const updated = await chrome.tabs.get(tab.id);
   return JSON.stringify({ tabId: updated.id, url: updated.url, windowId: updated.windowId });
 }
@@ -506,6 +528,48 @@ async function toolNewWindow({ url, incognito = false }) {
   const win = await chrome.windows.create({ url: url || undefined, incognito, focused: true });
   const tab = win.tabs?.[0];
   return JSON.stringify({ windowId: win.id, tabId: tab?.id, url: tab?.url });
+}
+
+async function toolWaitForSelector({ selector, tabId, timeout = 10000 }) {
+  if (!selector) throw new Error("Selector is required");
+  const tab = await getTabById(tabId);
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (sel) => !!document.querySelector(sel),
+      args: [selector]
+    });
+    if (result[0]?.result) return `Element found: ${selector}`;
+    await new Promise(r => setTimeout(r, 300));
+  }
+  throw new Error(`Timeout waiting for selector: ${selector} (${timeout}ms)`);
+}
+
+async function toolKeyboard({ key, selector, tabId, modifiers = [] }) {
+  if (!key) throw new Error("Key is required");
+  const tab = await getTabById(tabId);
+  const result = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (sel, k, mods) => {
+      const target = sel ? document.querySelector(sel) : document.activeElement;
+      if (sel && !target) return { success: false, error: `Element not found: ${sel}` };
+      const opts = {
+        key: k, bubbles: true, cancelable: true,
+        ctrlKey: mods.includes("ctrl"),
+        shiftKey: mods.includes("shift"),
+        altKey: mods.includes("alt"),
+        metaKey: mods.includes("meta"),
+      };
+      target.dispatchEvent(new KeyboardEvent("keydown", opts));
+      target.dispatchEvent(new KeyboardEvent("keypress", opts));
+      target.dispatchEvent(new KeyboardEvent("keyup", opts));
+      return { success: true };
+    },
+    args: [selector || null, key, modifiers]
+  });
+  if (!result[0]?.result?.success) throw new Error(result[0]?.result?.error || "Keyboard event failed");
+  return `Key "${key}"${modifiers.length ? ` (${modifiers.join("+")})` : ""} sent${selector ? ` to ${selector}` : ""}`;
 }
 
 // ============================================================================

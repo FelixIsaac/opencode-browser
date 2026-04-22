@@ -33,7 +33,11 @@ chrome.storage.onChanged.addListener((changes) => {
 async function getBlockedPatterns() {
   if (cachedPatterns) return cachedPatterns;
   const { customBlocklist = [] } = await chrome.storage.local.get("customBlocklist");
-  cachedPatterns = [...DEFAULT_BLOCKED_PATTERNS, ...customBlocklist.map(p => new RegExp(p, "i"))];
+  const safe = customBlocklist.filter(p => {
+    if (typeof p !== "string" || p.length > 200) return false;
+    try { new RegExp(p); return true; } catch { return false; }
+  });
+  cachedPatterns = [...DEFAULT_BLOCKED_PATTERNS, ...safe.map(p => new RegExp(p, "i"))];
   return cachedPatterns;
 }
 
@@ -241,7 +245,10 @@ async function toolNavigate({ url, tabId }) {
   const tab = await getTabById(tabId);
   await chrome.tabs.update(tab.id, { url });
   await waitForTabLoad(tab.id);
-  return `Navigated to ${url}`;
+  // Re-check after load: server-side redirects can land on a blocked domain
+  const final = await chrome.tabs.get(tab.id);
+  await assertUrlAllowed(final.url);
+  return `Navigated to ${final.url}`;
 }
 
 async function toolClick({ selector, tabId }) {
@@ -302,7 +309,7 @@ async function toolType({ selector, text, tabId, clear = false }) {
     throw new Error(result[0]?.result?.error || "Type failed");
   }
   
-  return `Typed "${text}" into ${selector}`;
+  return `Typed into ${selector}`;
 }
 
 async function toolScreenshot({ tabId, fullPage = false }) {
@@ -408,7 +415,10 @@ async function toolSnapshot({ tabId }) {
           }
           if (element.tagName === "INPUT") {
             node.type = element.type;
-            node.value = element.value;
+            // Never expose password or hidden field values
+            if (element.type !== "password" && element.type !== "hidden") {
+              node.value = element.value;
+            }
           }
           
           // Generate a selector
@@ -504,8 +514,9 @@ async function toolScroll({ x = 0, y = 0, selector, tabId }) {
 }
 
 async function toolWait({ ms = 1000 }) {
-  await new Promise(resolve => setTimeout(resolve, ms));
-  return `Waited ${ms}ms`;
+  const capped = Math.min(Math.max(0, ms), 30000);
+  await new Promise(resolve => setTimeout(resolve, capped));
+  return `Waited ${capped}ms`;
 }
 
 // Persists across tool calls in this SW lifecycle; reset when SW restarts.
@@ -625,7 +636,8 @@ async function toolNewTab({ url, active = false }) {
 }
 
 async function toolCloseTab({ tabId }) {
-  const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
+  if (!tabId) throw new Error("tabId is required — omitting it would close the user's active tab");
+  const tab = await chrome.tabs.get(tabId);
   await chrome.tabs.remove(tab.id);
   return `Closed tab ${tab.id}`;
 }

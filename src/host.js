@@ -12,7 +12,7 @@
  */
 
 import { createServer } from "net";
-import { writeFileSync, appendFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
+import { writeFileSync, appendFileSync, existsSync, mkdirSync, unlinkSync, chmodSync } from "fs";
 import { homedir, platform } from "os";
 import { join } from "path";
 
@@ -105,10 +105,21 @@ const SOCKET_PATH = platform() === "win32"
 let nextClientId = 0;
 const clients = new Map(); // clientId → socket
 
-// pendingRequests maps hostRequestId → { clientId, mcpId }
+// pendingRequests maps hostRequestId → { clientId, mcpId, ts }
 // so tool responses route back to the correct client
 let pendingRequests = new Map();
 let requestId = 0;
+
+const PENDING_TTL_MS = 90_000;
+setInterval(() => {
+  const cutoff = Date.now() - PENDING_TTL_MS;
+  for (const [id, entry] of pendingRequests) {
+    if (entry.ts < cutoff) {
+      pendingRequests.delete(id);
+      log(`Expired pending request ${id} (TTL)`);
+    }
+  }
+}, 30_000).unref();
 
 function connectToMcpServer(attempt = 1) {
   // Clean up stale socket (Unix only — named pipes on Windows are auto-cleaned)
@@ -153,7 +164,13 @@ function connectToMcpServer(attempt = 1) {
   });
 
   const tryListen = () => {
+    // Restrict socket to owner-only before binding (Unix only — named pipes on Windows are ACL-controlled)
+    const oldUmask = platform() !== "win32" ? process.umask(0o177) : null;
     server.listen(SOCKET_PATH, () => {
+      if (oldUmask !== null) {
+        process.umask(oldUmask);
+        try { chmodSync(SOCKET_PATH, 0o600); } catch {}
+      }
       log("Listening for MCP connections on", SOCKET_PATH);
     });
   };
@@ -178,7 +195,7 @@ function handleMcpMessage(clientId, message) {
     // If server.js times out the request (60s) and removes it from its own map, this
     // entry is never cleaned up — it accumulates until process restart. In high-volume
     // workloads with frequent timeouts, add a matching TTL here.
-    pendingRequests.set(id, { clientId, mcpId: message.id });
+    pendingRequests.set(id, { clientId, mcpId: message.id, ts: Date.now() });
     writeMessage({ type: "tool_request", id, tool: message.tool, args: message.args });
   }
 }

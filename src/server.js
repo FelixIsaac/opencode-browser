@@ -341,10 +341,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Close a browser tab",
         inputSchema: {
           type: "object",
+          required: ["tabId"],
           properties: {
             tabId: {
               type: "number",
-              description: "Tab ID to close. Closes active tab if omitted."
+              description: "Tab ID to close (required — use browser_get_tabs to find the ID)."
             }
           }
         }

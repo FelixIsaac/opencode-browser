@@ -581,17 +581,23 @@ async function getOrCreateAgentGroup(tabId) {
   }
 }
 
+const BLANK_TAB_URLS = new Set(["about:blank", "chrome://newtab/", ""]);
+
 async function toolNewTab({ url, active = false }) {
   if (url) await assertUrlAllowed(url);
   const windowId = await getOrCreateAgentWindow();
-  // Single query — avoids race between two separate queries
   const allTabs = await chrome.tabs.query({ windowId });
   let tab;
-  if (allTabs.length === 1 && allTabs[0].url === "about:blank") {
-    await chrome.tabs.update(allTabs[0].id, { url: url || "about:blank", active });
+  // Reuse the lone placeholder tab (about:blank or chrome://newtab/) — avoids double-tab
+  if (allTabs.length === 1 && BLANK_TAB_URLS.has(allTabs[0].url)) {
+    await chrome.tabs.update(allTabs[0].id, { url: url || "about:blank", active: true });
     tab = await chrome.tabs.get(allTabs[0].id);
   } else {
-    tab = await chrome.tabs.create({ url: url || "about:blank", active, windowId });
+    tab = await chrome.tabs.create({ url: url || "about:blank", active: true, windowId });
+    // Close any leftover blank placeholder tabs so the agent window stays clean
+    for (const bt of allTabs.filter(t => BLANK_TAB_URLS.has(t.url))) {
+      await chrome.tabs.remove(bt.id).catch(() => {});
+    }
   }
   try {
     if (url) await waitForTabLoad(tab.id);

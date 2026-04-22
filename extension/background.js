@@ -471,11 +471,24 @@ async function toolGetTabs() {
   })), null, 2);
 }
 
+// Serializes debugger access per tab — prevents concurrent attach on the same tab (C1 fix)
+const debuggerQueue = new Map(); // tabId → settled-promise tail
+
 async function toolExecuteScript({ code, tabId }) {
   if (!code) throw new Error("Code is required");
 
   const tab = await getTabById(tabId);
-  const target = { tabId: tab.id };
+  const id = tab.id;
+
+  const prev = debuggerQueue.get(id) ?? Promise.resolve();
+  const curr = prev.then(() => _executeWithDebugger(id, code));
+  // Store a settled tail so errors don't block future calls for this tab
+  debuggerQueue.set(id, curr.then(() => {}, () => {}));
+  return curr;
+}
+
+async function _executeWithDebugger(tabId, code) {
+  const target = { tabId };
 
   await new Promise((resolve, reject) =>
     chrome.debugger.attach(target, "1.3", () =>
@@ -485,7 +498,8 @@ async function toolExecuteScript({ code, tabId }) {
 
   try {
     const res = await new Promise((resolve, reject) =>
-      chrome.debugger.sendCommand(target, "Runtime.evaluate", { expression: code, returnByValue: true }, (r) =>
+      // timeout: 55000 keeps us under server.js 60s so finally always runs (C2 fix)
+      chrome.debugger.sendCommand(target, "Runtime.evaluate", { expression: code, returnByValue: true, timeout: 55000 }, (r) =>
         chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve(r)
       )
     );
@@ -495,7 +509,11 @@ async function toolExecuteScript({ code, tabId }) {
       throw new Error(`Script error: ${msg}`);
     }
 
-    return JSON.stringify(res.result?.value ?? null);
+    const value = JSON.stringify(res.result?.value ?? null);
+    if (value.length > 51200) {
+      throw new Error(`Result exceeds 50KB (${value.length} bytes) — narrow your query or return a subset of the data.`);
+    }
+    return value;
   } finally {
     await new Promise(resolve => chrome.debugger.detach(target, resolve));
   }
@@ -721,13 +739,24 @@ async function toolKeyboard({ key, selector, tabId, modifiers = [] }) {
 // Extension Lifecycle
 // ============================================================================
 
+async function detachStaleDebuggerSessions() {
+  const targets = await new Promise(resolve => chrome.debugger.getTargets(resolve));
+  for (const t of targets) {
+    if (t.attached) {
+      await new Promise(resolve => chrome.debugger.detach({ targetId: t.id }, resolve));
+    }
+  }
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   console.log("[OpenCode] Extension installed");
+  await detachStaleDebuggerSessions();
   await connectToNativeHost();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   console.log("[OpenCode] Extension started");
+  await detachStaleDebuggerSessions();
   await connectToNativeHost();
 });
 

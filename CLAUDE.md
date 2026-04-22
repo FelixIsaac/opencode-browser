@@ -5,7 +5,7 @@ See [AGENTS.md](./AGENTS.md) for full agent behavioral guidance.
 ## Quick Setup (Claude Code global)
 
 ```bash
-claude mcp add -s user browser -- node /path/to/opencode-browser/src/server.js
+claude mcp add -s user browser -- node ~/.opencode-browser/server.js
 ```
 
 That's it — available in every Claude Code session.

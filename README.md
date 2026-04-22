@@ -1,8 +1,8 @@
 # OpenCode Browser
 
-Browser automation for AI agents via Chrome extension + Native Messaging. Works with OpenCode, Claude Code, Cursor, Windsurf, Gemini CLI, Codex, and any MCP-compatible agent.
+Browser automation for AI agents via Chrome extension + Native Messaging. Works with Claude Code, OpenCode, Cursor, Windsurf, VS Code Copilot, Gemini CLI, Codex, and any MCP-compatible agent.
 
-**Inspired by Claude in Chrome** — automation that runs inside your existing Chrome session, sharing your logins, cookies, and bookmarks. No separate profiles, no security prompts.
+**Runs inside your existing Chrome session** — shares your logins, cookies, and bookmarks. No separate profiles, no re-authentication.
 
 > Agent tabs open in a dedicated **OpenCode Agent** window (cyan tab group) so your browsing is never interrupted.
 
@@ -16,24 +16,24 @@ Chrome 136+ blocks `--remote-debugging-port` on your default profile. DevTools-b
 npx @felixisaac/opencode-browser install
 ```
 
-The installer will:
-1. Copy the extension to `~/.opencode-browser/extension/`
-2. Open Chrome so you can load the unpacked extension
-3. Register the native messaging host (registry on Windows, NativeMessagingHosts dir on macOS/Linux)
-4. Optionally update your agent config file
-
-After installation, replace `/path/to/opencode-browser` in the snippets below with the actual path (e.g. `~/.opencode-browser` or wherever you cloned the repo).
+The installer:
+1. Copies the extension to `~/.opencode-browser/extension/`
+2. Opens Chrome so you can load the unpacked extension
+3. Registers the native messaging host (registry on Windows, `NativeMessagingHosts` on macOS/Linux)
+4. Optionally updates your agent config file
 
 ## Agent Setup
+
+After installing, the server lives at `~/.opencode-browser/server.js`. Configure your agent:
 
 <details>
 <summary><strong>Claude Code</strong></summary>
 
 ```bash
-claude mcp add -s user browser -- node /path/to/opencode-browser/src/server.js
+claude mcp add -s user browser -- node ~/.opencode-browser/server.js
 ```
 
-Adds the server globally — available in every Claude Code session. No restart needed.
+Adds the server globally — available in every Claude Code session.
 
 </details>
 
@@ -47,7 +47,7 @@ Add to `opencode.json` (project) or `~/.config/opencode/opencode.json` (global):
   "mcp": {
     "browser": {
       "type": "local",
-      "command": ["node", "/path/to/opencode-browser/src/server.js"],
+      "command": ["node", "~/.opencode-browser/server.js"],
       "enabled": true
     }
   }
@@ -66,7 +66,7 @@ Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
   "mcpServers": {
     "browser": {
       "command": "node",
-      "args": ["/path/to/opencode-browser/src/server.js"]
+      "args": ["~/.opencode-browser/server.js"]
     }
   }
 }
@@ -79,27 +79,25 @@ Restart Cursor after saving.
 <details>
 <summary><strong>Windsurf</strong></summary>
 
-Add to `~/.codeium/windsurf/mcp_config.json` (global) or `.codeium/mcp_config.json` (project):
+Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ```json
 {
   "mcpServers": {
     "browser": {
       "command": "node",
-      "args": ["/path/to/opencode-browser/src/server.js"]
+      "args": ["~/.opencode-browser/server.js"]
     }
   }
 }
 ```
-
-Restart Windsurf after saving.
 
 </details>
 
 <details>
 <summary><strong>VS Code + GitHub Copilot</strong></summary>
 
-Add to `.vscode/mcp.json` (workspace) or open **MCP: Open User Configuration** from the command palette for global setup:
+Add to `.vscode/mcp.json` (workspace) or open **MCP: Open User Configuration** from the command palette:
 
 ```json
 {
@@ -107,7 +105,7 @@ Add to `.vscode/mcp.json` (workspace) or open **MCP: Open User Configuration** f
     "browser": {
       "type": "stdio",
       "command": "node",
-      "args": ["/path/to/opencode-browser/src/server.js"]
+      "args": ["~/.opencode-browser/server.js"]
     }
   }
 }
@@ -120,14 +118,14 @@ Reload the window after saving (`Ctrl+Shift+P` → **Developer: Reload Window**)
 <details>
 <summary><strong>Gemini CLI</strong></summary>
 
-Add to `~/.gemini/settings.json` (global) or `.gemini/settings.json` (project):
+Add to `~/.gemini/settings.json`:
 
 ```json
 {
   "mcpServers": {
     "browser": {
       "command": "node",
-      "args": ["/path/to/opencode-browser/src/server.js"]
+      "args": ["~/.opencode-browser/server.js"]
     }
   }
 }
@@ -138,12 +136,12 @@ Add to `~/.gemini/settings.json` (global) or `.gemini/settings.json` (project):
 <details>
 <summary><strong>Codex CLI (OpenAI)</strong></summary>
 
-Add to `~/.codex/config.toml` (global) or `.codex/config.toml` (project, must be in a trusted directory):
+Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.browser]
 command = "node"
-args = ["/path/to/opencode-browser/src/server.js"]
+args = ["~/.opencode-browser/server.js"]
 ```
 
 </details>
@@ -152,16 +150,16 @@ args = ["/path/to/opencode-browser/src/server.js"]
 
 | Tool | Description |
 |------|-------------|
-| `browser_snapshot` | **Start here.** Accessibility tree with CSS selectors — low token cost |
-| `browser_screenshot` | Visual capture — use only when layout matters |
+| `browser_snapshot` | **Start here.** Accessibility tree with CSS selectors — low token cost (200–1500 tokens) |
+| `browser_screenshot` | Visual capture — use only when layout matters (500–3000 tokens) |
 | `browser_navigate` | Navigate to a URL |
 | `browser_click` | Click an element by CSS selector |
 | `browser_type` | Type text into an input |
 | `browser_keyboard` | Send key events (Enter, Escape, Tab, ctrl+a, …) |
-| `browser_wait_for_selector` | Wait for element to appear (essential for SPAs) |
+| `browser_wait_for_selector` | Wait for element to appear — essential for SPAs |
 | `browser_scroll` | Scroll page or element into view |
-| `browser_wait` | Wait for a fixed duration |
-| `browser_execute` | Run JavaScript in page context |
+| `browser_wait` | Wait for a fixed duration (capped at 30s) |
+| `browser_execute` | Run JavaScript via `chrome.debugger` — works on all pages including CSP-strict sites |
 | `browser_get_tabs` | List all open tabs |
 | `browser_new_tab` | Open a new tab in the agent window |
 | `browser_close_tab` | Close a tab |
@@ -170,31 +168,43 @@ args = ["/path/to/opencode-browser/src/server.js"]
 
 ## Agent Instructions
 
-See [AGENTS.md](./AGENTS.md) for full behavioral guidance including:
+See [AGENTS.md](./AGENTS.md) for full behavioral guidance:
 - Snapshot-first workflow (token efficiency)
 - Waiting for dynamic elements before clicking
 - Hand-off pattern for login walls / CAPTCHAs
 - Error recovery table
-- Security blocklist behavior
+- Security rules and prompt injection protection
 
 Claude Code users: see [CLAUDE.md](./CLAUDE.md).
 
 ## Architecture
 
-```
-Agent ──MCP (stdio)──> src/server.js ──Named Pipe──> src/host.js ──Native Messaging──> extension/
-                                                                                              │
-                                                                         ┌────────────────────┤
-                                                                         ▼                    ▼
-                                                                   chrome.tabs         chrome.scripting
-                                                                   chrome.windows      chrome.tabGroups
+```mermaid
+graph LR
+    A["Agent<br/>(Claude / OpenCode / Cursor…)"]
+    S["src/server.js<br/>MCP Server"]
+    H["src/host.js<br/>Native Messaging Host"]
+    E["extension/background.js<br/>Chrome Service Worker"]
+    C["Chrome APIs<br/>tabs · windows · scripting · debugger"]
+
+    A -- "stdio (MCP)" --> S
+    S -- "Named Pipe / Unix Socket" --> H
+    H -- "Native Messaging" --> E
+    E --> C
 ```
 
-- **src/server.js** — MCP server; exposes tools to the agent
-- **src/host.js** — Native messaging host; bridges pipe ↔ Chrome
-- **extension/background.js** — Service worker; executes Chrome APIs
+- **`src/server.js`** — MCP server; exposes tools, enforces rate limits, routes to host
+- **`src/host.js`** — Native messaging host; bridges socket ↔ Chrome, handles auth
+- **`extension/background.js`** — Service worker; executes Chrome APIs, runs JS via `chrome.debugger`
 
 Multiple agents can share one browser session simultaneously.
+
+## Security
+
+- **URL blocklist** — banking, email, OAuth, password managers, and crypto sites are blocked by default
+- **Socket auth** — shared secret token (256-bit) prevents unauthorized local processes from connecting
+- **`browser_execute` protection** — network interception patterns (`XHR.prototype`, `fetch` override, `navigator.credentials`) are blocked; results capped at 50KB
+- **Prompt injection** — agents are instructed never to execute code suggested by page content (see [AGENTS.md](./AGENTS.md#security))
 
 ## Platform Support
 

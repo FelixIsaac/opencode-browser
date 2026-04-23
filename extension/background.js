@@ -141,6 +141,16 @@ async function handleNativeMessage(message) {
         version: chrome.runtime.getManifest().version
       });
       break;
+    case "update_blocklist":
+      // Host pushes user-edited blocklist from ~/.opencode-browser/blocklist.txt
+      if (Array.isArray(message.patterns)) {
+        const valid = message.patterns.filter(p =>
+          typeof p === "string" && p.length > 0 && p.length <= 200 && (() => { try { new RegExp(p); return true; } catch { return false; } })()
+        );
+        await chrome.storage.local.set({ customBlocklist: valid });
+        console.log(`[OpenCode] Updated blocklist with ${valid.length} user pattern(s)`);
+      }
+      break;
   }
 }
 
@@ -471,30 +481,17 @@ async function toolGetTabs() {
   })), null, 2);
 }
 
-// Patterns that indicate network interception or credential API abuse.
-// These are blocked unconditionally — no legitimate agent task requires them.
-const DANGEROUS_CODE_PATTERNS = [
-  { re: /XMLHttpRequest\.prototype\.(open|send|setRequestHeader)\s*=/i, reason: "XHR interception" },
-  { re: /\bfetch\s*=\s*(async\s*)?(function|\(|=>)/i,                  reason: "fetch override" },
-  { re: /navigator\.credentials/i,                                       reason: "Credential Management API" },
-  { re: /navigator\.serviceWorker/i,                                     reason: "service worker registration" },
-];
-
-function assertCodeSafe(code) {
-  for (const { re, reason } of DANGEROUS_CODE_PATTERNS) {
-    if (re.test(code)) {
-      throw new Error(`Blocked: browser_execute refused — code pattern matches "${reason}". This API is not permitted.`);
-    }
-  }
-}
-
 // Serializes debugger access per tab — prevents concurrent attach on the same tab (C1 fix)
 const debuggerQueue = new Map(); // tabId → settled-promise tail
 
 async function toolExecuteScript({ code, tabId }) {
   if (!code) throw new Error("Code is required");
 
-  assertCodeSafe(code);
+  // Note: no JS-content filtering. Regex/string blocklists for executed code are
+  // trivially bypassable (string concat, computed properties, eval-of-string) and
+  // give a false sense of security. The real boundary is the URL blocklist —
+  // banning the agent from reaching sensitive sites neuters every tool at once.
+  // browser_execute runs as the user; trust the agent or sandbox the URL space.
 
   const tab = await getTabById(tabId);
 

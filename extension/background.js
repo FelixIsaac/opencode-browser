@@ -506,8 +506,14 @@ async function toolExecuteScript({ code, tabId }) {
 
   const prev = debuggerQueue.get(id) ?? Promise.resolve();
   const curr = prev.then(() => _executeWithDebugger(id, code));
-  // Store a settled tail so errors don't block future calls for this tab
-  debuggerQueue.set(id, curr.then(() => {}, () => {}));
+  // Store a settled tail so errors don't block future calls for this tab.
+  // Delete entry once settled — but only if it's still ours (later calls
+  // will have replaced the value).
+  const tail = curr.then(() => {}, () => {});
+  debuggerQueue.set(id, tail);
+  tail.finally(() => {
+    if (debuggerQueue.get(id) === tail) debuggerQueue.delete(id);
+  });
   return curr;
 }
 
@@ -521,6 +527,12 @@ async function _executeWithDebugger(tabId, code) {
   );
 
   try {
+    // TOCTOU re-check: tab URL may have changed (meta-refresh, JS redirect)
+    // between the caller's assertTabAllowed and now. Re-verify after attach
+    // so we don't run JS on a freshly-blocklisted page.
+    const liveTab = await chrome.tabs.get(tabId).catch(() => null);
+    if (liveTab?.url) await assertUrlAllowed(liveTab.url);
+
     const res = await new Promise((resolve, reject) =>
       // timeout: 55000 keeps us under server.js 60s so finally always runs (C2 fix)
       chrome.debugger.sendCommand(target, "Runtime.evaluate", { expression: code, returnByValue: true, timeout: 55000 }, (r) =>
@@ -692,6 +704,8 @@ async function toolNewTab({ url, active = false }) {
     await getOrCreateAgentGroup(tab.id).catch(() => {});
   }
   const updated = await chrome.tabs.get(tab.id);
+  // Re-check after load: a redirect (meta-refresh / JS) may have landed on a blocked URL
+  await assertUrlAllowed(updated.url);
   return JSON.stringify({ tabId: updated.id, url: updated.url, windowId: updated.windowId });
 }
 

@@ -181,19 +181,7 @@ Claude Code users: see [CLAUDE.md](./CLAUDE.md).
 
 ## Architecture
 
-```mermaid
-graph LR
-    A["Agent<br/>(Claude / OpenCode / Cursor…)"]
-    S["src/server.js<br/>MCP Server"]
-    H["src/host.js<br/>Native Messaging Host"]
-    E["extension/background.js<br/>Chrome Service Worker"]
-    C["Chrome APIs<br/>tabs · windows · scripting · debugger"]
-
-    A -- "stdio (MCP)" --> S
-    S -- "Named Pipe / Unix Socket" --> H
-    H -- "Native Messaging" --> E
-    E --> C
-```
+![Architecture](https://mermaid.ink/svg/pako:eNpVkUFqwzAQRa8yzCqBut6HEggikEKdmprShdWFbE1lNbFkJDkJhEBP0ytkn6P0JCWOEtrdSPO-Pv9rj7WVhBNUTnQNPL1wAwAwKznOFJnwULl0OmJr0UuCFJ47MswOI-udt-7n63vM8f2iKkqO3tWpJ7chd__pB3XGciiGmxu4iGBjfbhiSxH0hiAj74XSRsHC-nBTzEuOtAtkvLYmrUS9Us72Rl7VrHG2pcFH1wRv1q3--LGSYyRm-eNFEUTl4XSErTbSbofR10534ex9OoKkqlcqPhJbgSQBjj5IbWGUsXzMEZJkCkXMf9kvRUsSct2da3o1egeFrVcUIryIHVzh_7EjNI-xhwPDO2zJtUJLnOwxNNSev0zSh-jXAQ-HX-XskeE)
 
 - **`src/server.js`** — MCP server; exposes tools, enforces rate limits, routes to host
 - **`src/host.js`** — Native messaging host; bridges socket ↔ Chrome, handles auth

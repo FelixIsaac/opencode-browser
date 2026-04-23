@@ -39,7 +39,7 @@ if (!imgPart) {
 }
 
 const srcBuf = Buffer.from(imgPart.inlineData.data, "base64");
-const sourcePath = join(OUT_DIR, "icon-source.png");
+const sourcePath = join(__dirname, "icon-source.png");
 writeFileSync(sourcePath, srcBuf);
 console.log(`[tandem] wrote ${sourcePath} (${srcBuf.length} bytes)`);
 

@@ -19,7 +19,16 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const { version } = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf8"));
+
+function readVersion() {
+  // When installed: package.json is next to server.js (~/.opencode-browser/)
+  // When run from repo: package.json is one level up
+  for (const p of [join(__dirname, "package.json"), join(__dirname, "../package.json")]) {
+    try { return JSON.parse(readFileSync(p, "utf8")).version; } catch {}
+  }
+  return "0.0.0";
+}
+const version = readVersion();
 
 const BASE_DIR = join(homedir(), ".opencode-browser");
 const SOCKET_PATH = platform() === "win32"

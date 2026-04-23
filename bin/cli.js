@@ -187,9 +187,11 @@ To load the extension:
   header("Step 4: Register Native Messaging Host");
 
   const nodePath = process.execPath;
-  const hostScriptPath = join(PACKAGE_ROOT, "src", "host.js");
   const wrapperDir = join(homedir(), ".opencode-browser");
   mkdirSync(wrapperDir, { recursive: true });
+  // Wrapper points to the installed host.js (copied below) — not the npx cache,
+  // which can be cleared/relocated and would break Chrome's native messaging launch.
+  const hostScriptPath = join(wrapperDir, "host.js");
 
   let wrapperPath;
   if (currentPlatform === "win32") {
@@ -229,11 +231,19 @@ To load the extension:
   const logsDir = join(homedir(), ".opencode-browser", "logs");
   mkdirSync(logsDir, { recursive: true });
 
-  // Copy server.js and host.js to ~/.opencode-browser/ so agents can reference a stable path
+  // Copy server.js and host.js to ~/.opencode-browser/ so agents (and the
+  // native-messaging wrapper) reference a stable path, not the npx cache.
   const installedServerPath = join(wrapperDir, "server.js");
   const installedHostPath = join(wrapperDir, "host.js");
   copyFileSync(join(PACKAGE_ROOT, "src", "server.js"), installedServerPath);
   copyFileSync(join(PACKAGE_ROOT, "src", "host.js"), installedHostPath);
+
+  // Write stub package.json so server.js can read its version from the install dir
+  const pkgVersion = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf-8")).version;
+  writeFileSync(
+    join(wrapperDir, "package.json"),
+    JSON.stringify({ name: "opencode-browser-installed", version: pkgVersion }, null, 2) + "\n"
+  );
   success(`Server installed at: ${installedServerPath}`);
 
   header("Step 5: Configure Your Agent");

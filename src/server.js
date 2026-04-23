@@ -298,15 +298,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       annotations: { destructiveHint: false, readOnlyHint: true, idempotentHint: true },
       inputSchema: { type: "object", properties: {} },
       outputSchema: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            id: { type: "number" }, url: { type: "string" },
-            title: { type: "string" }, active: { type: "boolean" },
-            windowId: { type: "number" }
+        type: "object",
+        properties: {
+          tabs: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "number" }, url: { type: "string" },
+                title: { type: "string" }, active: { type: "boolean" },
+                windowId: { type: "number" }
+              }
+            }
           }
-        }
+        },
+        required: ["tabs"]
       }
     },
     {
@@ -521,9 +527,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     if (STRUCTURED_OUTPUT_TOOLS.has(name)) {
       try {
         const parsed = JSON.parse(result);
+        const structured = name === "browser_get_tabs" ? { tabs: parsed } : parsed;
         return {
           content: [{ type: "text", text: result }],
-          structuredContent: parsed
+          structuredContent: structured
         };
       } catch {}
     }

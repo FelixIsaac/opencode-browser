@@ -69,6 +69,133 @@ async function confirm(question) {
   return answer.toLowerCase() === "y" || answer.toLowerCase() === "yes";
 }
 
+// ============================================================================
+// Multi-agent auto-configuration
+// ============================================================================
+
+function commandExists(cmd) {
+  try {
+    execSync(platform() === "win32" ? `where ${cmd}` : `command -v ${cmd}`, { stdio: "ignore" });
+    return true;
+  } catch { return false; }
+}
+
+function mergeJsonConfig(path, mutate) {
+  let config = {};
+  if (existsSync(path)) {
+    try { config = JSON.parse(readFileSync(path, "utf-8")); }
+    catch (e) { throw new Error(`Existing file is not valid JSON: ${e.message}`); }
+  } else {
+    mkdirSync(dirname(path), { recursive: true });
+  }
+  mutate(config);
+  writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+}
+
+function appendCodexToml(path, serverPath) {
+  const block = `\n[mcp_servers.browser]\ncommand = "node"\nargs = ["${serverPath.replace(/\\/g, "\\\\")}"]\n`;
+  if (existsSync(path)) {
+    const existing = readFileSync(path, "utf-8");
+    if (existing.includes("[mcp_servers.browser]")) {
+      throw new Error("[mcp_servers.browser] section already exists — edit manually");
+    }
+    writeFileSync(path, existing.replace(/\s+$/, "") + block);
+  } else {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, block.trimStart());
+  }
+}
+
+async function autoConfigureAgents(serverPath) {
+  const home = homedir();
+  const updated = [];
+
+  const agents = [
+    {
+      name: "Claude Code",
+      detect: () => commandExists("claude"),
+      apply: () => {
+        execSync(`claude mcp add -s user browser -- node "${serverPath}"`, { stdio: "ignore" });
+      },
+    },
+    {
+      name: "OpenCode (global)",
+      path: join(home, ".config", "opencode", "opencode.json"),
+      detect: function () { return existsSync(dirname(this.path)); },
+      apply: function () {
+        mergeJsonConfig(this.path, (c) => {
+          c.mcp = c.mcp || {};
+          c.mcp.browser = { type: "local", command: ["node", serverPath], enabled: true };
+        });
+      },
+    },
+    {
+      name: "Cursor",
+      path: join(home, ".cursor", "mcp.json"),
+      detect: function () { return existsSync(dirname(this.path)); },
+      apply: function () {
+        mergeJsonConfig(this.path, (c) => {
+          c.mcpServers = c.mcpServers || {};
+          c.mcpServers.browser = { command: "node", args: [serverPath] };
+        });
+      },
+    },
+    {
+      name: "Windsurf",
+      path: join(home, ".codeium", "windsurf", "mcp_config.json"),
+      detect: function () { return existsSync(join(home, ".codeium", "windsurf")); },
+      apply: function () {
+        mergeJsonConfig(this.path, (c) => {
+          c.mcpServers = c.mcpServers || {};
+          c.mcpServers.browser = { command: "node", args: [serverPath] };
+        });
+      },
+    },
+    {
+      name: "Gemini CLI",
+      path: join(home, ".gemini", "settings.json"),
+      detect: function () { return existsSync(dirname(this.path)); },
+      apply: function () {
+        mergeJsonConfig(this.path, (c) => {
+          c.mcpServers = c.mcpServers || {};
+          c.mcpServers.browser = { command: "node", args: [serverPath] };
+        });
+      },
+    },
+    {
+      name: "Codex CLI",
+      path: join(home, ".codex", "config.toml"),
+      detect: function () { return existsSync(dirname(this.path)); },
+      apply: function () { appendCodexToml(this.path, serverPath); },
+    },
+  ];
+
+  const detected = agents.filter((a) => {
+    try { return a.detect(); } catch { return false; }
+  });
+
+  if (detected.length === 0) {
+    log(color("yellow", "  No installed agents detected — configure manually using Step 5 above."));
+    return updated;
+  }
+
+  log(color("bright", `\nDetected ${detected.length} agent(s): ${detected.map((a) => a.name).join(", ")}`));
+
+  for (const agent of detected) {
+    if (await confirm(`  Configure ${agent.name}?`)) {
+      try {
+        agent.apply();
+        success(`Configured ${agent.name}`);
+        updated.push(agent.name);
+      } catch (e) {
+        error(`${agent.name}: ${e.message}`);
+      }
+    }
+  }
+
+  return updated;
+}
+
 async function main() {
   console.log(`
 ${color("cyan", color("bright", "╔═══════════════════════════════════════════════════════════╗"))}
@@ -266,27 +393,23 @@ ${color("bright", JSON.stringify(mcpConfig, null, 2))}
 ${color("bright", "Other agents")} — use: node ${installedServerPath}
 `);
 
+  const updatedConfigs = await autoConfigureAgents(installedServerPath);
+
+  // Project-level opencode.json takes precedence if present in cwd
   const opencodeJsonPath = join(process.cwd(), "opencode.json");
-  let shouldUpdateConfig = false;
-
   if (existsSync(opencodeJsonPath)) {
-    shouldUpdateConfig = await confirm(`Found opencode.json in current directory. Add browser config automatically?`);
-
-    if (shouldUpdateConfig) {
+    if (await confirm(`Also update project opencode.json in current directory?`)) {
       try {
         const config = JSON.parse(readFileSync(opencodeJsonPath, "utf-8"));
         config.mcp = config.mcp || {};
-        config.mcp.browser = mcpConfig.browser;
+        config.mcp.browser = { type: "local", command: ["node", installedServerPath], enabled: true };
         writeFileSync(opencodeJsonPath, JSON.stringify(config, null, 2) + "\n");
-        success("Updated opencode.json with browser MCP config");
+        success("Updated project opencode.json");
+        updatedConfigs.push("opencode.json (project)");
       } catch (e) {
         error(`Failed to update opencode.json: ${e.message}`);
-        log("Please add the config manually.");
       }
     }
-  } else {
-    log(`No opencode.json found in current directory.`);
-    log(`Add the config above to your agent's config manually.`);
   }
 
   header("Installation Complete!");
@@ -295,7 +418,7 @@ ${color("bright", "Other agents")} — use: node ${installedServerPath}
 ${color("green", "✓")} Extension installed at: ${extensionDir}
 ${color("green", "✓")} Server installed at:    ${installedServerPath}
 ${color("green", "✓")} Native host registered
-${shouldUpdateConfig ? color("green", "✓") + " opencode.json updated" : color("yellow", "○") + " Configure your agent (see above)"}
+${updatedConfigs.length ? color("green", "✓") + " Auto-configured: " + updatedConfigs.join(", ") : color("yellow", "○") + " No agent configs auto-updated — see Step 5 above"}
 
 ${color("bright", "Next steps:")}
 1. ${color("cyan", "Restart Chrome")} (close all windows and reopen)

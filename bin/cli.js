@@ -377,13 +377,23 @@ To load the extension:
   copyFileSync(join(PACKAGE_ROOT, "src", "server.js"), installedServerPath);
   copyFileSync(join(PACKAGE_ROOT, "src", "host.js"), installedHostPath);
 
-  // Write stub package.json so server.js can read its version from the install dir
-  const pkgVersion = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf-8")).version;
+  // Write package.json with deps so `npm install` below resolves them
+  const rootPkg = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf-8"));
   writeFileSync(
     join(wrapperDir, "package.json"),
-    JSON.stringify({ name: "tandem-installed", version: pkgVersion }, null, 2) + "\n"
+    JSON.stringify({
+      name: "tandem-installed",
+      version: rootPkg.version,
+      type: "module",
+      dependencies: rootPkg.dependencies,
+    }, null, 2) + "\n"
   );
-  success(`Server installed at: ${installedServerPath}`);
+  try {
+    execSync("npm install --omit=dev --prefer-offline", { cwd: wrapperDir, stdio: "pipe" });
+    success(`Server installed at: ${installedServerPath}`);
+  } catch (e) {
+    throw new Error(`Failed to install server dependencies: ${e.message}`);
+  }
 
   header("Step 5: Configure Your Agent");
 

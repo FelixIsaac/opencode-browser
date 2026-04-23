@@ -6,9 +6,9 @@
  */
 
 import { createInterface } from "readline";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync, statSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync, statSync, lstatSync, unlinkSync } from "fs";
 import { homedir, platform } from "os";
-import { join, dirname } from "path";
+import { join, dirname, sep, resolve } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 
@@ -244,10 +244,22 @@ async function install() {
 
   mkdirSync(extensionDir, { recursive: true });
 
+  // Zip-Slip guard: a malicious tarball could include entries like
+  // "../../.ssh/authorized_keys" or symlinks pointing outside the package.
+  // Refuse anything that resolves outside extensionDir, and skip symlinks
+  // entirely so copyFileSync can't write through them.
+  const safeRoot = resolve(extensionDir) + sep;
   const files = readdirSync(srcExtensionDir, { recursive: true });
   for (const file of files) {
     const srcPath = join(srcExtensionDir, file);
     const destPath = join(extensionDir, file);
+    if (!resolve(destPath).startsWith(safeRoot)) {
+      throw new Error(`Refusing to write outside install dir: ${destPath}`);
+    }
+    if (lstatSync(srcPath).isSymbolicLink()) {
+      warn(`Skipping symlink in package: ${file}`);
+      continue;
+    }
     if (statSync(srcPath).isDirectory()) {
       mkdirSync(destPath, { recursive: true });
     } else {

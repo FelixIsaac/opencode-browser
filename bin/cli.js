@@ -115,7 +115,17 @@ async function autoConfigureAgents(serverPath) {
       name: "Claude Code",
       detect: () => commandExists("claude"),
       apply: () => {
-        execSync(`claude mcp add -s user browser -- node "${serverPath}"`, { stdio: "ignore" });
+        try {
+          execSync(`claude mcp add -s user browser -- node "${serverPath}"`, { stdio: "pipe" });
+        } catch (e) {
+          const stderr = e.stderr?.toString() ?? "";
+          if (stderr.includes("already") || stderr.includes("exists")) {
+            execSync(`claude mcp remove browser -s user`, { stdio: "pipe" });
+            execSync(`claude mcp add -s user browser -- node "${serverPath}"`, { stdio: "pipe" });
+          } else {
+            throw new Error(stderr || e.message);
+          }
+        }
       },
     },
     {
@@ -283,7 +293,7 @@ To load the extension:
    (looks like: abcdefghijklmnopqrstuvwxyz123456)
 `);
 
-  const openChrome = await confirm("Open Chrome extensions page now?");
+  const openChrome = await confirm("Open Chrome extensions page now? (load unpacked there, then come back)");
   if (openChrome) {
     try {
       if (currentPlatform === "darwin") {
@@ -295,6 +305,9 @@ To load the extension:
       }
     } catch {}
   }
+
+  log("");
+  const extensionId = await ask(color("bright", "Enter your Extension ID: "));
 
   const openFinder = await confirm("Open extension folder in file manager?");
   if (openFinder) {
@@ -308,9 +321,6 @@ To load the extension:
       }
     } catch {}
   }
-
-  log("");
-  const extensionId = await ask(color("bright", "Enter your Extension ID: "));
 
   if (!extensionId) {
     error("Extension ID is required");

@@ -1,10 +1,12 @@
-# OpenCode Browser
+# Tandem
+
+> A hardened, multi-agent fork of [opencode-browser](https://github.com/benjaminshafii/opencode-browser) by Benjamin Shafii.
 
 Browser automation for AI agents via Chrome extension + Native Messaging. Works with Claude Code, OpenCode, Cursor, Windsurf, VS Code Copilot, Gemini CLI, Codex, and any MCP-compatible agent.
 
 **Runs inside your existing Chrome session** — shares your logins, cookies, and bookmarks. No separate profiles, no re-authentication.
 
-> Agent tabs open in a dedicated **OpenCode Agent** window (cyan tab group) so your browsing is never interrupted.
+> Agent tabs open in a dedicated **Tandem** window (cyan tab group) so your browsing is never interrupted.
 
 ## Why not Playwright / DevTools?
 
@@ -13,24 +15,24 @@ Chrome 136+ blocks `--remote-debugging-port` on your default profile. DevTools-b
 ## Installation
 
 ```bash
-npx @felixisaac/opencode-browser install
+npx @felixisaac/tandem install
 ```
 
 The installer:
-1. Copies the extension to `~/.opencode-browser/extension/`
+1. Copies the extension to `~/.tandem/extension/`
 2. Opens Chrome so you can load the unpacked extension
 3. Registers the native messaging host (registry on Windows, `NativeMessagingHosts` on macOS/Linux)
 4. Optionally updates your agent config file
 
 ## Agent Setup
 
-After installing, the server lives at `~/.opencode-browser/server.js`. Configure your agent:
+After installing, the server lives at `~/.tandem/server.js`. Configure your agent:
 
 <details>
 <summary><strong>Claude Code</strong></summary>
 
 ```bash
-claude mcp add -s user browser -- node ~/.opencode-browser/server.js
+claude mcp add -s user browser -- node ~/.tandem/server.js
 ```
 
 Adds the server globally — available in every Claude Code session.
@@ -47,7 +49,7 @@ Add to `opencode.json` (project) or `~/.config/opencode/opencode.json` (global):
   "mcp": {
     "browser": {
       "type": "local",
-      "command": ["node", "~/.opencode-browser/server.js"],
+      "command": ["node", "~/.tandem/server.js"],
       "enabled": true
     }
   }
@@ -66,7 +68,7 @@ Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
   "mcpServers": {
     "browser": {
       "command": "node",
-      "args": ["~/.opencode-browser/server.js"]
+      "args": ["~/.tandem/server.js"]
     }
   }
 }
@@ -86,7 +88,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
   "mcpServers": {
     "browser": {
       "command": "node",
-      "args": ["~/.opencode-browser/server.js"]
+      "args": ["~/.tandem/server.js"]
     }
   }
 }
@@ -105,7 +107,7 @@ Add to `.vscode/mcp.json` (workspace) or open **MCP: Open User Configuration** f
     "browser": {
       "type": "stdio",
       "command": "node",
-      "args": ["~/.opencode-browser/server.js"]
+      "args": ["~/.tandem/server.js"]
     }
   }
 }
@@ -125,7 +127,7 @@ Add to `~/.gemini/settings.json`:
   "mcpServers": {
     "browser": {
       "command": "node",
-      "args": ["~/.opencode-browser/server.js"]
+      "args": ["~/.tandem/server.js"]
     }
   }
 }
@@ -141,7 +143,7 @@ Add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.browser]
 command = "node"
-args = ["~/.opencode-browser/server.js"]
+args = ["~/.tandem/server.js"]
 ```
 
 </details>
@@ -203,11 +205,11 @@ Multiple agents can share one browser session simultaneously.
 
 The agent acts as **you** inside your real Chrome session. The trust boundary is the **URL space**, not the JS the agent runs.
 
-- **URL blocklist** — banking, email, OAuth, password managers, crypto blocked by default. Extend via `~/.opencode-browser/blocklist.txt` (one regex per line, `#` for comments). The host pushes updates to the extension on reconnect.
+- **URL blocklist** — banking, email, OAuth, password managers, crypto blocked by default. Extend via `~/.tandem/blocklist.txt` (one regex per line, `#` for comments). The host pushes updates to the extension on reconnect.
 - **Socket auth** — 256-bit token rotated on every host start. Server reads token fresh on each connect.
 - **Prompt injection** — agents are instructed never to act on instructions in page content (see [AGENTS.md](./AGENTS.md#security)). This remains an unsolved problem industry-wide; the URL blocklist is your safety net.
 - **`browser_execute`** — runs arbitrary JS as you via `chrome.debugger`. No content filter (regex blocklists are trivially bypassable); 50KB result cap as DoS guard. Don't run untrusted agents.
-- **Logging** — `~/.opencode-browser/logs/host.log` redacts `code`, `text`, and URL query strings; rotates at 5MB; dir is `0700`.
+- **Logging** — `~/.tandem/logs/host.log` redacts `code`, `text`, and URL query strings; rotates at 5MB; dir is `0700`.
 
 **Known limitation (Windows):** the named pipe has the default ACL (Everyone). Any process running as the same Windows user can connect. Token rotation per host start limits exposure. Run only agents you trust.
 
@@ -222,15 +224,15 @@ The agent acts as **you** inside your real Chrome session. The trust boundary is
 ## Uninstall
 
 ```bash
-npx @felixisaac/opencode-browser uninstall
+npx @felixisaac/tandem uninstall
 ```
 
-Then remove the extension from Chrome and optionally delete `~/.opencode-browser/`.
+Then remove the extension from Chrome and optionally delete `~/.tandem/`.
 
 ## Logs
 
 ```
-~/.opencode-browser/logs/host.log
+~/.tandem/logs/host.log
 ```
 
 ## License

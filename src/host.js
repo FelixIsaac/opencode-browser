@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Native Messaging Host for OpenCode Browser Automation
+ * Native Messaging Host for Tandem Browser Automation
  * 
  * This script is launched by Chrome when the extension connects.
  * It communicates with Chrome via stdin/stdout using Chrome's native messaging protocol.
@@ -17,7 +17,7 @@ import { randomBytes } from "crypto";
 import { homedir, platform } from "os";
 import { join } from "path";
 
-const BASE_DIR = join(homedir(), ".opencode-browser");
+const BASE_DIR = join(homedir(), ".tandem");
 const LOG_DIR = join(BASE_DIR, "logs");
 if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
 try { chmodSync(LOG_DIR, 0o700); } catch {}
@@ -160,8 +160,8 @@ function writeMessage(message) {
 // ============================================================================
 
 const SOCKET_PATH = platform() === "win32"
-  ? "\\\\.\\pipe\\opencode-browser"
-  : join(homedir(), ".opencode-browser", "browser.sock");
+  ? "\\\\.\\pipe\\tandem"
+  : join(homedir(), ".tandem", "browser.sock");
 
 // Multi-client: each connected MCP server gets a unique clientId
 let nextClientId = 0;

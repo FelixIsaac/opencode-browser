@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * OpenCode Browser - CLI Installer
+ * Tandem - CLI Installer
  * 
  * Installs the Chrome extension and native messaging host for browser automation.
  */
@@ -199,7 +199,7 @@ async function autoConfigureAgents(serverPath) {
 async function main() {
   console.log(`
 ${color("cyan", color("bright", "╔═══════════════════════════════════════════════════════════╗"))}
-${color("cyan", color("bright", "║"))}      ${color("bright", "OpenCode Browser")} - Browser Automation for AI Agents       ${color("cyan", color("bright", "║"))}
+${color("cyan", color("bright", "║"))}      ${color("bright", "Tandem")} - Browser Automation for AI Agents       ${color("cyan", color("bright", "║"))}
 ${color("cyan", color("bright", "║"))}                                                           ${color("cyan", color("bright", "║"))}
 ${color("cyan", color("bright", "║"))}  Inspired by Claude in Chrome - browser automation that   ${color("cyan", color("bright", "║"))}
 ${color("cyan", color("bright", "║"))}  works with your existing logins and bookmarks.           ${color("cyan", color("bright", "║"))}
@@ -215,11 +215,11 @@ ${color("cyan", color("bright", "╚══════════════�
   } else {
     log(`
 ${color("bright", "Usage:")}
-  npx @felixisaac/opencode-browser install     Install extension and native host
-  npx @felixisaac/opencode-browser uninstall   Remove native host registration
+  npx @felixisaac/tandem install     Install extension and native host
+  npx @felixisaac/tandem uninstall   Remove native host registration
 
 ${color("bright", "After installation:")}
-  Configure your agent to run: node ~/.opencode-browser/server.js
+  Configure your agent to run: node ~/.tandem/server.js
 `);
   }
 
@@ -239,7 +239,7 @@ async function install() {
 
   header("Step 2: Install Extension Directory");
 
-  const extensionDir = join(homedir(), ".opencode-browser", "extension");
+  const extensionDir = join(homedir(), ".tandem", "extension");
   const srcExtensionDir = join(PACKAGE_ROOT, "extension");
 
   mkdirSync(extensionDir, { recursive: true });
@@ -326,7 +326,7 @@ To load the extension:
   header("Step 4: Register Native Messaging Host");
 
   const nodePath = process.execPath;
-  const wrapperDir = join(homedir(), ".opencode-browser");
+  const wrapperDir = join(homedir(), ".tandem");
   mkdirSync(wrapperDir, { recursive: true });
   // Wrapper points to the installed host.js (copied below) — not the npx cache,
   // which can be cleared/relocated and would break Chrome's native messaging launch.
@@ -342,8 +342,8 @@ To load the extension:
   }
 
   const manifest = {
-    name: "com.opencode.browser_automation",
-    description: "OpenCode Browser Automation Native Messaging Host",
+    name: "com.tandem.browser",
+    description: "Tandem Browser Automation Native Messaging Host",
     path: wrapperPath,
     type: "stdio",
     allowed_origins: [`chrome-extension://${extensionId}/`],
@@ -351,9 +351,9 @@ To load the extension:
 
   if (currentPlatform === "win32") {
     // On Windows, manifest lives anywhere; Chrome finds it via registry
-    const manifestPath = join(wrapperDir, "com.opencode.browser_automation.json");
+    const manifestPath = join(wrapperDir, "com.tandem.browser.json");
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-    const regKey = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.opencode.browser_automation";
+    const regKey = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.tandem.browser";
     execSync(`REG ADD "${regKey}" /ve /t REG_SZ /d "${manifestPath}" /f`, { stdio: "ignore", shell: true });
     success(`Native host manifest: ${manifestPath}`);
     success(`Registry key written: ${regKey}`);
@@ -362,15 +362,15 @@ To load the extension:
       ? join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
       : join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
     mkdirSync(nativeHostDir, { recursive: true });
-    const manifestPath = join(nativeHostDir, "com.opencode.browser_automation.json");
+    const manifestPath = join(nativeHostDir, "com.tandem.browser.json");
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
     success(`Native host registered at: ${manifestPath}`);
   }
 
-  const logsDir = join(homedir(), ".opencode-browser", "logs");
+  const logsDir = join(homedir(), ".tandem", "logs");
   mkdirSync(logsDir, { recursive: true });
 
-  // Copy server.js and host.js to ~/.opencode-browser/ so agents (and the
+  // Copy server.js and host.js to ~/.tandem/ so agents (and the
   // native-messaging wrapper) reference a stable path, not the npx cache.
   const installedServerPath = join(wrapperDir, "server.js");
   const installedHostPath = join(wrapperDir, "host.js");
@@ -381,7 +381,7 @@ To load the extension:
   const pkgVersion = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf-8")).version;
   writeFileSync(
     join(wrapperDir, "package.json"),
-    JSON.stringify({ name: "opencode-browser-installed", version: pkgVersion }, null, 2) + "\n"
+    JSON.stringify({ name: "tandem-installed", version: pkgVersion }, null, 2) + "\n"
   );
   success(`Server installed at: ${installedServerPath}`);
 
@@ -454,18 +454,18 @@ ${color("bright", "Available tools (15):")}
   browser_switch_tab       - Focus a tab
   browser_new_window       - Open a new window
 
-${color("bright", "Logs:")} ~/.opencode-browser/logs/
+${color("bright", "Logs:")} ~/.tandem/logs/
 `);
 }
 
 async function uninstall() {
-  header("Uninstalling OpenCode Browser");
+  header("Uninstalling Tandem");
 
   const currentPlatform = platform();
 
   if (currentPlatform === "win32") {
-    const manifestPath = join(homedir(), ".opencode-browser", "com.opencode.browser_automation.json");
-    const regKey = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.opencode.browser_automation";
+    const manifestPath = join(homedir(), ".tandem", "com.tandem.browser.json");
+    const regKey = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.tandem.browser";
     try {
       execSync(`REG DELETE "${regKey}" /f`, { stdio: "ignore", shell: true });
       success("Removed registry key");
@@ -480,7 +480,7 @@ async function uninstall() {
     const nativeHostDir = currentPlatform === "darwin"
       ? join(homedir(), "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
       : join(homedir(), ".config", "google-chrome", "NativeMessagingHosts");
-    const manifestPath = join(nativeHostDir, "com.opencode.browser_automation.json");
+    const manifestPath = join(nativeHostDir, "com.tandem.browser.json");
     if (existsSync(manifestPath)) {
       unlinkSync(manifestPath);
       success("Removed native host registration");
@@ -490,10 +490,10 @@ async function uninstall() {
   }
 
   log(`
-${color("bright", "Note:")} Extension files at ~/.opencode-browser/ were not removed.
+${color("bright", "Note:")} Extension files at ~/.tandem/ were not removed.
 Remove manually if needed:
-  Windows: rmdir /s /q %USERPROFILE%\\.opencode-browser
-  Unix:    rm -rf ~/.opencode-browser/
+  Windows: rmdir /s /q %USERPROFILE%\\.tandem
+  Unix:    rm -rf ~/.tandem/
 
 Also remove the "browser" MCP entry from your agent config.
 `);

@@ -1,7 +1,7 @@
-// OpenCode Browser Automation - Background Service Worker
-// Native Messaging Host: com.opencode.browser_automation
+// Tandem Browser Automation - Background Service Worker
+// Native Messaging Host: com.tandem.browser
 
-const NATIVE_HOST_NAME = "com.opencode.browser_automation";
+const NATIVE_HOST_NAME = "com.tandem.browser";
 
 // ============================================================================
 // URL Security Blocklist
@@ -82,7 +82,7 @@ async function _doConnect() {
     port.onMessage.addListener(handleNativeMessage);
     port.onDisconnect.addListener(() => {
       const error = chrome.runtime.lastError?.message;
-      console.log("[OpenCode] Native host disconnected:", error);
+      console.log("[Tandem] Native host disconnected:", error);
       nativePort = null;
     });
 
@@ -101,14 +101,14 @@ async function _doConnect() {
 
     if (connected) {
       nativePort = port;
-      console.log("[OpenCode] Connected to native host");
+      console.log("[Tandem] Connected to native host");
       return true;
     } else {
       port.disconnect();
       return false;
     }
   } catch (error) {
-    console.error("[OpenCode] Failed to connect:", error);
+    console.error("[Tandem] Failed to connect:", error);
     return false;
   }
 }
@@ -125,7 +125,7 @@ function disconnectNativeHost() {
 // ============================================================================
 
 async function handleNativeMessage(message) {
-  console.log("[OpenCode] Received from native:", message.type);
+  console.log("[Tandem] Received from native:", message.type);
 
   switch (message.type) {
     case "tool_request":
@@ -142,13 +142,13 @@ async function handleNativeMessage(message) {
       });
       break;
     case "update_blocklist":
-      // Host pushes user-edited blocklist from ~/.opencode-browser/blocklist.txt
+      // Host pushes user-edited blocklist from ~/.tandem/blocklist.txt
       if (Array.isArray(message.patterns)) {
         const valid = message.patterns.filter(p =>
           typeof p === "string" && p.length > 0 && p.length <= 200 && (() => { try { new RegExp(p); return true; } catch { return false; } })()
         );
         await chrome.storage.local.set({ customBlocklist: valid });
-        console.log(`[OpenCode] Updated blocklist with ${valid.length} user pattern(s)`);
+        console.log(`[Tandem] Updated blocklist with ${valid.length} user pattern(s)`);
       }
       break;
   }
@@ -158,7 +158,7 @@ function sendToNative(message) {
   if (nativePort) {
     nativePort.postMessage(message);
   } else {
-    console.error("[OpenCode] Cannot send - not connected");
+    console.error("[Tandem] Cannot send - not connected");
   }
 }
 
@@ -390,8 +390,8 @@ async function toolSnapshot({ tabId }) {
       
       // Clear stale ids from the previous snapshot so they don't pollute the page
       // or confuse selector lookups after a re-snapshot.
-      for (const el of document.querySelectorAll("[data-opencode-snap]")) {
-        el.removeAttribute("data-opencode-snap");
+      for (const el of document.querySelectorAll("[data-tandem-snap]")) {
+        el.removeAttribute("data-tandem-snap");
       }
 
       function buildSnapshot(element, depth = 0, uid = 0) {
@@ -446,8 +446,8 @@ async function toolSnapshot({ tabId }) {
             node.selector = `#${CSS.escape(element.id)}`;
           } else {
             const snapId = `s${uid}`;
-            element.setAttribute("data-opencode-snap", snapId);
-            node.selector = `[data-opencode-snap="${snapId}"]`;
+            element.setAttribute("data-tandem-snap", snapId);
+            node.selector = `[data-tandem-snap="${snapId}"]`;
           }
           
           nodes.push(node);
@@ -510,7 +510,7 @@ async function toolExecuteScript({ code, tabId }) {
   // blocklist is the primary defence; this surfaces unexpected scope to logs.
   const { agentWindowIds = [] } = await chrome.storage.session.get("agentWindowIds").catch(() => ({}));
   if (!agentWindowIds.includes(tab.windowId)) {
-    console.warn(`[OpenCode] browser_execute on non-agent-window tab ${tab.id} (${tab.url})`);
+    console.warn(`[Tandem] browser_execute on non-agent-window tab ${tab.id} (${tab.url})`);
   }
 
   const id = tab.id;
@@ -681,7 +681,7 @@ async function getOrCreateAgentGroup(tabId) {
   try {
     const groupId = await chrome.tabs.group({ tabIds: [tabId] });
     try {
-      await chrome.tabGroups.update(groupId, { title: "OpenCode Agent", color: "cyan" });
+      await chrome.tabGroups.update(groupId, { title: "Tandem", color: "cyan" });
     } catch {}
     agentGroupId = groupId;
     return groupId;
@@ -798,13 +798,13 @@ async function detachStaleDebuggerSessions() {
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
-  console.log("[OpenCode] Extension installed");
+  console.log("[Tandem] Extension installed");
   await detachStaleDebuggerSessions();
   await connectToNativeHost();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-  console.log("[OpenCode] Extension started");
+  console.log("[Tandem] Extension started");
   await detachStaleDebuggerSessions();
   await connectToNativeHost();
 });
@@ -816,14 +816,14 @@ chrome.action.onClicked.addListener(async () => {
     chrome.notifications.create({
       type: "basic",
       iconUrl: "icons/icon128.png",
-      title: "OpenCode Browser",
+      title: "Tandem",
       message: connected ? "Connected to native host" : "Failed to connect. Is the native host installed?"
     });
   } else {
     chrome.notifications.create({
       type: "basic",
       iconUrl: "icons/icon128.png",
-      title: "OpenCode Browser",
+      title: "Tandem",
       message: "Already connected"
     });
   }
@@ -835,9 +835,9 @@ chrome.action.onClicked.addListener(async () => {
 // An open nativePort itself keeps the SW alive; this alarm only handles reconnection
 // after host crashes. For sub-minute keepalive, use an offscreen document instead.
 // LIMIT: chrome.alarms minimum interval = 1 min (MV3, Chrome 117+)
-chrome.alarms.create("opencode-keepalive", { periodInMinutes: 0.25 });
+chrome.alarms.create("tandem-keepalive", { periodInMinutes: 0.25 });
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== "opencode-keepalive") return;
+  if (alarm.name !== "tandem-keepalive") return;
   if (!nativePort) {
     // connectToNativeHost is now re-entrancy-safe: concurrent calls share one attempt.
     await connectToNativeHost();

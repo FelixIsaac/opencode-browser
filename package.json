@@ -1,10 +1,10 @@
 {
-  "name": "@felixisaac/opencode-browser",
+  "name": "@felixisaac/tandem",
   "version": "1.0.0",
   "description": "Browser automation for AI agents via Chrome extension + Native Messaging. Works with OpenCode, Claude Code, and any MCP-compatible agent.",
   "type": "module",
   "bin": {
-    "opencode-browser": "./bin/cli.js"
+    "tandem": "./bin/cli.js"
   },
   "files": [
     "bin/",
@@ -41,12 +41,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/felixisaac/opencode-browser.git"
+    "url": "git+https://github.com/felixisaac/tandem.git"
   },
   "bugs": {
-    "url": "https://github.com/felixisaac/opencode-browser/issues"
+    "url": "https://github.com/felixisaac/tandem/issues"
   },
-  "homepage": "https://github.com/felixisaac/opencode-browser#readme",
+  "homepage": "https://github.com/felixisaac/tandem#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "~1.29.0"
   }

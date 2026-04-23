@@ -21,7 +21,7 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function readVersion() {
-  // When installed: package.json is next to server.js (~/.opencode-browser/)
+  // When installed: package.json is next to server.js (~/.tandem/)
   // When run from repo: package.json is one level up
   for (const p of [join(__dirname, "package.json"), join(__dirname, "../package.json")]) {
     try { return JSON.parse(readFileSync(p, "utf8")).version; } catch {}
@@ -30,9 +30,9 @@ function readVersion() {
 }
 const version = readVersion();
 
-const BASE_DIR = join(homedir(), ".opencode-browser");
+const BASE_DIR = join(homedir(), ".tandem");
 const SOCKET_PATH = platform() === "win32"
-  ? "\\\\.\\pipe\\opencode-browser"
+  ? "\\\\.\\pipe\\tandem"
   : join(BASE_DIR, "browser.sock");
 const TOKEN_PATH = join(BASE_DIR, "auth.token");
 
@@ -161,7 +161,7 @@ async function executeTool(tool, args) {
     try {
       await connectToHost();
     } catch {
-      const err = new Error("Not connected to browser extension. Make sure Chrome is running with the OpenCode extension installed.");
+      const err = new Error("Not connected to browser extension. Make sure Chrome is running with the Tandem extension installed.");
       err.code = "CONNECTION_ERROR";
       throw err;
     }

@@ -26,6 +26,132 @@ const LOG_FILE_OLD = join(LOG_DIR, "host.log.1");
 const LOG_MAX_BYTES = 5 * 1024 * 1024; // 5MB cap before rotation
 const BLOCKLIST_FILE = join(BASE_DIR, "blocklist.txt");
 
+// =========================================================================
+// Tab Claims / Leases (ported from opencode-browser v4)
+// =========================================================================
+
+const DEFAULT_LEASE_TTL_MS = 5 * 60 * 1000;
+const LEASE_TTL_MS = (() => {
+  const raw = process.env.TANDEM_CLAIM_TTL_MS ?? process.env.OPENCODE_BROWSER_CLAIM_TTL_MS;
+  const v = Number(raw);
+  if (Number.isFinite(v) && v >= 0) return v;
+  return DEFAULT_LEASE_TTL_MS;
+})();
+
+function nowMs() {
+  return Date.now();
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+// tabId -> { sessionId, claimedAt, lastSeenAt }
+const claims = new Map();
+// sessionId -> { defaultTabId, lastSeenAt }
+const sessionState = new Map();
+
+function listClaims() {
+  const out = [];
+  for (const [tabId, info] of claims.entries()) {
+    out.push({
+      tabId,
+      sessionId: info.sessionId,
+      claimedAt: info.claimedAt,
+      lastSeenAt: new Date(info.lastSeenAt).toISOString(),
+    });
+  }
+  out.sort((a, b) => a.tabId - b.tabId);
+  return out;
+}
+
+function sessionHasClaims(sessionId) {
+  for (const info of claims.values()) {
+    if (info.sessionId === sessionId) return true;
+  }
+  return false;
+}
+
+function getSessionState(sessionId) {
+  if (!sessionId) return null;
+  let state = sessionState.get(sessionId);
+  if (!state) {
+    state = { defaultTabId: null, lastSeenAt: nowMs() };
+    sessionState.set(sessionId, state);
+  }
+  return state;
+}
+
+function touchSession(sessionId) {
+  const state = getSessionState(sessionId);
+  if (!state) return null;
+  state.lastSeenAt = nowMs();
+  return state;
+}
+
+function setDefaultTab(sessionId, tabId) {
+  const state = getSessionState(sessionId);
+  if (!state) return;
+  state.defaultTabId = tabId;
+  state.lastSeenAt = nowMs();
+}
+
+function clearDefaultTab(sessionId, tabId) {
+  const state = sessionState.get(sessionId);
+  if (!state) return;
+  if (tabId === undefined || state.defaultTabId === tabId) state.defaultTabId = null;
+  state.lastSeenAt = nowMs();
+}
+
+function releaseClaim(tabId) {
+  const info = claims.get(tabId);
+  if (!info) return;
+  claims.delete(tabId);
+  clearDefaultTab(info.sessionId, tabId);
+}
+
+function releaseClaimsForSession(sessionId) {
+  for (const [tabId, info] of claims.entries()) {
+    if (info.sessionId === sessionId) claims.delete(tabId);
+  }
+  clearDefaultTab(sessionId);
+  sessionState.delete(sessionId);
+}
+
+function checkClaim(tabId, sessionId) {
+  const existing = claims.get(tabId);
+  if (!existing) return { ok: true };
+  if (existing.sessionId === sessionId) return { ok: true };
+  return { ok: false, error: `Tab ${tabId} is owned by another session (${existing.sessionId})` };
+}
+
+function setClaim(tabId, sessionId) {
+  const existing = claims.get(tabId);
+  claims.set(tabId, {
+    sessionId,
+    claimedAt: existing ? existing.claimedAt : nowIso(),
+    lastSeenAt: nowMs(),
+  });
+}
+
+function touchClaim(tabId, sessionId) {
+  const existing = claims.get(tabId);
+  if (existing && existing.sessionId !== sessionId) return;
+  if (existing) existing.lastSeenAt = nowMs();
+  else setClaim(tabId, sessionId);
+}
+
+function cleanupStaleClaims() {
+  if (!LEASE_TTL_MS) return;
+  const now = nowMs();
+  for (const [tabId, info] of claims.entries()) {
+    if (now - info.lastSeenAt > LEASE_TTL_MS) releaseClaim(tabId);
+  }
+  for (const [sessionId, state] of sessionState.entries()) {
+    if (!sessionHasClaims(sessionId) && now - state.lastSeenAt > LEASE_TTL_MS) sessionState.delete(sessionId);
+  }
+}
+
 // ============================================================================
 // Auth Token — rotated per host start
 // ============================================================================
@@ -166,11 +292,30 @@ const SOCKET_PATH = platform() === "win32"
 // Multi-client: each connected MCP server gets a unique clientId
 let nextClientId = 0;
 const clients = new Map(); // clientId → socket
+const clientSessions = new Map(); // clientId -> sessionId
 
 // pendingRequests maps hostRequestId → { clientId, mcpId, ts }
 // so tool responses route back to the correct client
 let pendingRequests = new Map();
 let requestId = 0;
+
+// Internal extension tool calls (used for broker-like orchestration)
+const extensionPending = new Map(); // hostRequestId -> { resolve, reject, ts }
+
+const DEFAULT_EXT_TIMEOUT_MS = 60_000;
+
+function sendExtensionTool(tool, args) {
+  const id = ++requestId;
+  return new Promise((resolve, reject) => {
+    extensionPending.set(id, { resolve, reject, ts: Date.now() });
+    writeMessage({ type: "tool_request", id, tool, args });
+    setTimeout(() => {
+      if (!extensionPending.has(id)) return;
+      extensionPending.delete(id);
+      reject(new Error("Timed out waiting for extension"));
+    }, DEFAULT_EXT_TIMEOUT_MS).unref?.();
+  });
+}
 
 const PENDING_TTL_MS = 90_000;
 setInterval(() => {
@@ -181,6 +326,13 @@ setInterval(() => {
       log(`Expired pending request ${id} (TTL)`);
     }
   }
+  for (const [id, entry] of extensionPending) {
+    if (entry.ts < cutoff) {
+      extensionPending.delete(id);
+      log(`Expired internal extension request ${id} (TTL)`);
+    }
+  }
+  cleanupStaleClaims();
 }, 30_000).unref();
 
 function connectToMcpServer(attempt = 1) {
@@ -194,6 +346,7 @@ function connectToMcpServer(attempt = 1) {
   const server = createServer((socket) => {
     const clientId = ++nextClientId;
     let authenticated = false;
+    let sessionId = null;
 
     // Disconnect unauthenticated clients after 5 seconds
     const authTimeout = setTimeout(() => {
@@ -216,8 +369,10 @@ function connectToMcpServer(attempt = 1) {
             // First message must be { type: "auth", token: "<AUTH_TOKEN>" }
             if (msg.type === "auth" && msg.token === AUTH_TOKEN) {
               authenticated = true;
+              sessionId = typeof msg.sessionId === "string" && msg.sessionId.trim() ? msg.sessionId.trim() : `c${clientId}`;
               clearTimeout(authTimeout);
               clients.set(clientId, socket);
+              clientSessions.set(clientId, sessionId);
               log(`MCP client ${clientId} authenticated (total: ${clients.size})`);
               if (clients.size === 1) writeMessage({ type: "mcp_connected" });
             } else {
@@ -226,7 +381,9 @@ function connectToMcpServer(attempt = 1) {
             }
             continue;
           }
-          handleMcpMessage(clientId, msg);
+          void handleMcpMessage(clientId, msg).catch((e) => {
+            log(`Client ${clientId}: handler error:`, e.message);
+          });
         } catch (e) {
           log("Failed to parse MCP message:", e.message);
         }
@@ -237,6 +394,12 @@ function connectToMcpServer(attempt = 1) {
       clearTimeout(authTimeout);
       if (authenticated) {
         clients.delete(clientId);
+        const sid = clientSessions.get(clientId);
+        clientSessions.delete(clientId);
+        if (sid) {
+          releaseClaimsForSession(sid);
+          log(`Released claims for session ${sid}`);
+        }
         log(`MCP client ${clientId} disconnected (total: ${clients.size})`);
         if (clients.size === 0) writeMessage({ type: "mcp_disconnected" });
       }
@@ -273,17 +436,109 @@ function connectToMcpServer(attempt = 1) {
   tryListen();
 }
 
-function handleMcpMessage(clientId, message) {
+async function handleMcpMessage(clientId, message) {
   log(`Client ${clientId} →`, summarizeMessage(message));
 
   if (message.type === "tool_request") {
+    const mcpId = message.id;
+    const tool = message.tool;
+    const args = message.args || {};
+    const sessionId = clientSessions.get(clientId) ?? `c${clientId}`;
+    touchSession(sessionId);
+
+    // Host-only tools
+    if (tool === "status") {
+      return respondToolOk(clientId, mcpId, JSON.stringify({
+        mcpConnected: clients.size > 0,
+        clientCount: clients.size,
+        leaseTtlMs: LEASE_TTL_MS,
+        claims: listClaims(),
+      }));
+    }
+
+    if (tool === "list_claims") {
+      return respondToolOk(clientId, mcpId, JSON.stringify({ claims: listClaims() }));
+    }
+
+    if (tool === "claim_tab") {
+      const tabId = Number(args.tabId);
+      if (!Number.isFinite(tabId)) return respondToolError(clientId, mcpId, "tabId is required");
+      const force = !!args.force;
+      const existing = claims.get(tabId);
+      if (existing && existing.sessionId !== sessionId && !force) {
+        return respondToolError(clientId, mcpId, `Tab ${tabId} is owned by another session (${existing.sessionId})`);
+      }
+      setClaim(tabId, sessionId);
+      setDefaultTab(sessionId, tabId);
+      return respondToolOk(clientId, mcpId, `Claimed tab ${tabId}`);
+    }
+
+    if (tool === "release_tab") {
+      const tabId = Number(args.tabId);
+      if (!Number.isFinite(tabId)) return respondToolError(clientId, mcpId, "tabId is required");
+      const existing = claims.get(tabId);
+      if (existing && existing.sessionId !== sessionId) {
+        return respondToolError(clientId, mcpId, `Tab ${tabId} is owned by another session (${existing.sessionId})`);
+      }
+      releaseClaim(tabId);
+      return respondToolOk(clientId, mcpId, `Released tab ${tabId}`);
+    }
+
+    if (tool === "open_tab") {
+      const res = await sendExtensionTool("new_tab", { url: args.url || "about:blank", active: !!args.active });
+      let parsed;
+      try { parsed = JSON.parse(res); } catch { parsed = null; }
+      const tabId = parsed?.tabId;
+      if (!Number.isFinite(tabId)) return respondToolError(clientId, mcpId, "Failed to open tab");
+      setDefaultTab(sessionId, tabId);
+      touchClaim(tabId, sessionId);
+      return respondToolOk(clientId, mcpId, res);
+    }
+
+    // Treat tab-creating tools as implicitly claiming the returned tab.
+    // Otherwise later tool calls with that tabId will fail the ownership check.
+    if (tool === "new_tab") {
+      const res = await sendExtensionTool("new_tab", args);
+      let parsed;
+      try { parsed = JSON.parse(res); } catch { parsed = null; }
+      const tabId = parsed?.tabId;
+      if (Number.isFinite(tabId)) {
+        setDefaultTab(sessionId, tabId);
+        touchClaim(tabId, sessionId);
+      }
+      return respondToolOk(clientId, mcpId, res);
+    }
+
+    if (tool === "new_window") {
+      const res = await sendExtensionTool("new_window", args);
+      let parsed;
+      try { parsed = JSON.parse(res); } catch { parsed = null; }
+      const tabId = parsed?.tabId;
+      if (Number.isFinite(tabId)) {
+        setDefaultTab(sessionId, tabId);
+        touchClaim(tabId, sessionId);
+      }
+      return respondToolOk(clientId, mcpId, res);
+    }
+
+    // Tools that touch a tab: apply per-session default + ownership checks.
+    let forwardedArgs = { ...args };
+    if (toolWantsTab(tool)) {
+      let tabId = forwardedArgs.tabId;
+      if (!Number.isFinite(tabId)) {
+        tabId = await ensureSessionTab(sessionId);
+        forwardedArgs.tabId = tabId;
+      }
+
+      const claimCheck = checkClaim(Number(tabId), sessionId);
+      if (!claimCheck.ok) return respondToolError(clientId, mcpId, claimCheck.error);
+      touchClaim(Number(tabId), sessionId);
+      setDefaultTab(sessionId, Number(tabId));
+    }
+
     const id = ++requestId;
-    // NOTE: pendingRequests entries are only removed when Chrome sends a tool_response.
-    // If server.js times out the request (60s) and removes it from its own map, this
-    // entry is never cleaned up — it accumulates until process restart. In high-volume
-    // workloads with frequent timeouts, add a matching TTL here.
-    pendingRequests.set(id, { clientId, mcpId: message.id, ts: Date.now() });
-    writeMessage({ type: "tool_request", id, tool: message.tool, args: message.args });
+    pendingRequests.set(id, { clientId, mcpId, ts: Date.now() });
+    writeMessage({ type: "tool_request", id, tool, args: forwardedArgs });
   }
 }
 
@@ -313,6 +568,45 @@ function sendToClient(clientId, message) {
   }
 }
 
+function respondToolOk(clientId, mcpId, content) {
+  sendToClient(clientId, { type: "tool_response", id: mcpId, result: { content } });
+}
+
+function respondToolError(clientId, mcpId, content) {
+  sendToClient(clientId, { type: "tool_response", id: mcpId, error: { content } });
+}
+
+function toolWantsTab(toolName) {
+  // Tools that do not touch tab content.
+  return !new Set([
+    "get_tabs",
+    "wait",
+    "new_tab",
+    "close_tab",
+    "switch_tab",
+    "new_window",
+    // Host-only/broker-like tools
+    "status",
+    "list_claims",
+    "claim_tab",
+    "release_tab",
+    "open_tab",
+  ]).has(toolName);
+}
+
+async function ensureSessionTab(sessionId) {
+  const state = getSessionState(sessionId);
+  if (state?.defaultTabId) return state.defaultTabId;
+  const res = await sendExtensionTool("new_tab", { url: "about:blank", active: false });
+  let parsed;
+  try { parsed = JSON.parse(res); } catch { parsed = null; }
+  const tabId = parsed?.tabId;
+  if (!Number.isFinite(tabId)) throw new Error("Failed to create agent tab");
+  setDefaultTab(sessionId, tabId);
+  touchClaim(tabId, sessionId);
+  return tabId;
+}
+
 // ============================================================================
 // Handle Messages from Chrome Extension
 // ============================================================================
@@ -328,9 +622,24 @@ async function handleChromeMessage(message) {
       break;
       
     case "tool_response": {
+      const internal = extensionPending.get(message.id);
+      if (internal) {
+        extensionPending.delete(message.id);
+        if (message.error?.content) internal.reject(new Error(message.error.content));
+        else internal.resolve(message.result?.content);
+        break;
+      }
+
       const pending = pendingRequests.get(message.id);
       if (pending) {
         pendingRequests.delete(message.id);
+
+        // Best-effort: if the tab was closed, drop any claim we held.
+        if (!message.error && typeof message.result?.content === "string") {
+          const m = message.result.content.match(/Closed tab\s+(\d+)/);
+          if (m) releaseClaim(Number(m[1]));
+        }
+
         sendToClient(pending.clientId, {
           type: "tool_response",
           id: pending.mcpId,

@@ -78,6 +78,8 @@ let connected = false;
 let pendingRequests = new Map();
 let requestId = 0;
 let sessionPrefix = Math.random().toString(36).slice(2, 8);
+// Stable per-process session id so the host can enforce per-client tab leases.
+const clientSessionId = Math.random().toString(36).slice(2);
 let buffer = "";
 let connectingPromise = null;
 
@@ -93,7 +95,7 @@ function _doConnect(retries, delayMs) {
       const sock = createConnection(SOCKET_PATH);
 
       sock.on("connect", () => {
-        sock.write(JSON.stringify({ type: "auth", token: loadToken() }) + "\n");
+        sock.write(JSON.stringify({ type: "auth", token: loadToken(), sessionId: clientSessionId }) + "\n");
         console.error("[browser-mcp] Connected to native host");
         socket = sock;
         buffer = "";
@@ -218,6 +220,65 @@ const server = new Server(
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
+    {
+      name: "browser_status",
+      description: "Get Tandem connection status and current per-session tab claims.",
+      annotations: { destructiveHint: false, readOnlyHint: true, idempotentHint: true },
+      inputSchema: { type: "object", properties: {} },
+      outputSchema: {
+        type: "object",
+        properties: {
+          mcpConnected: { type: "boolean" },
+          clientCount: { type: "number" },
+          leaseTtlMs: { type: "number" },
+          claims: { type: "array", items: { type: "object" } }
+        },
+        required: ["mcpConnected", "clientCount", "leaseTtlMs", "claims"]
+      }
+    },
+    {
+      name: "browser_list_claims",
+      description: "List per-session tab ownership claims.",
+      annotations: { destructiveHint: false, readOnlyHint: true, idempotentHint: true },
+      inputSchema: { type: "object", properties: {} },
+      outputSchema: { type: "object", properties: { claims: { type: "array", items: { type: "object" } } }, required: ["claims"] }
+    },
+    {
+      name: "browser_claim_tab",
+      description: "Claim a tab for this MCP client session (prevents other sessions from using it).",
+      annotations: { destructiveHint: true, readOnlyHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number", description: "Tab ID to claim" },
+          force: { type: "boolean", description: "Steal claim from another session" }
+        },
+        required: ["tabId"]
+      }
+    },
+    {
+      name: "browser_release_tab",
+      description: "Release a claimed tab.",
+      annotations: { destructiveHint: true, readOnlyHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: { tabId: { type: "number" } }, required: ["tabId"] }
+    },
+    {
+      name: "browser_open_tab",
+      description: "Open and claim a fresh agent tab for this session.",
+      annotations: { destructiveHint: true, readOnlyHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "Optional URL" },
+          active: { type: "boolean", description: "Focus in agent window (default: false)" }
+        }
+      },
+      outputSchema: {
+        type: "object",
+        properties: { tabId: { type: "number" }, url: { type: "string" }, windowId: { type: "number" } },
+        required: ["tabId", "url", "windowId"]
+      }
+    },
     {
       name: "browser_navigate",
       description: "Navigate to a URL in the browser. After navigating, call browser_wait_for_selector or browser_snapshot before interacting with elements.",
@@ -361,7 +422,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           url: { type: "string", description: "URL to open (omit for blank tab)" },
-          active: { type: "boolean", description: "Focus the new tab (default: true)" }
+          active: { type: "boolean", description: "Focus the new tab (default: false)" }
         }
       },
       outputSchema: {
@@ -452,10 +513,22 @@ const LONG_RUNNING_TOOLS = new Set([
 ]);
 
 // Tools whose text result is also parseable as structuredContent
-const STRUCTURED_OUTPUT_TOOLS = new Set(["browser_get_tabs", "browser_snapshot", "browser_new_tab"]);
+const STRUCTURED_OUTPUT_TOOLS = new Set([
+  "browser_get_tabs",
+  "browser_snapshot",
+  "browser_new_tab",
+  "browser_open_tab",
+  "browser_status",
+  "browser_list_claims",
+]);
 
 // Maps MCP tool names to internal tool names used by background.js
 const TOOL_MAP = {
+  browser_status:            "status",
+  browser_list_claims:       "list_claims",
+  browser_claim_tab:         "claim_tab",
+  browser_release_tab:       "release_tab",
+  browser_open_tab:          "open_tab",
   browser_navigate:          "navigate",
   browser_click:             "click",
   browser_type:              "type",

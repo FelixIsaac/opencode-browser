@@ -14,6 +14,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { createConnection } from "net";
 import { readFileSync } from "fs";
+import { randomBytes } from "crypto";
 import { homedir, platform } from "os";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -77,9 +78,9 @@ let socket = null;
 let connected = false;
 let pendingRequests = new Map();
 let requestId = 0;
-let sessionPrefix = Math.random().toString(36).slice(2, 8);
+let sessionPrefix = randomBytes(4).toString("hex");
 // Stable per-process session id so the host can enforce per-client tab leases.
-const clientSessionId = Math.random().toString(36).slice(2);
+const clientSessionId = randomBytes(16).toString("hex");
 let buffer = "";
 let connectingPromise = null;
 
@@ -99,7 +100,7 @@ function _doConnect(retries, delayMs) {
         console.error("[browser-mcp] Connected to native host");
         socket = sock;
         buffer = "";
-        sessionPrefix = Math.random().toString(36).slice(2, 8);
+        sessionPrefix = randomBytes(4).toString("hex");
         requestId = 0;
         connected = true;
         resolve();

@@ -176,7 +176,7 @@ async function handleToolRequest(request) {
 
   try {
     // Block tools that touch tab content if the target URL is sensitive
-    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks"]);
+    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads"]);
     if (!tablessTools.has(tool)) {
       await assertTabAllowed(args?.tabId ?? null);
     }
@@ -216,6 +216,22 @@ const TOOL_HANDLERS = {
   recent_browsing:      toolRecentBrowsing,
   history_stats:        toolHistoryStats,
   get_bookmarks:        toolGetBookmarks,
+  get_tab_groups:       toolGetTabGroups,
+  create_tab_group:     toolCreateTabGroup,
+  update_tab_group:     toolUpdateTabGroup,
+  move_to_group:        toolMoveToGroup,
+  print_to_pdf:         toolPrintToPdf,
+  performance:          toolPerformance,
+  device_emulate:       toolDeviceEmulate,
+  page_text:            toolPageText,
+  deduplicate_tabs:     toolDeduplicateTabs,
+  open_batch:           toolOpenBatch,
+  storage_inspect:      toolStorageInspect,
+  session_save:         toolSessionSave,
+  session_restore:      toolSessionRestore,
+  notify:               toolNotify,
+  storage_read:         toolStorageRead,
+  downloads:            toolDownloads,
 };
 
 async function executeTool(toolName, args) {
@@ -878,6 +894,258 @@ async function toolGetBookmarks() {
   const tree = await chrome.bookmarks.getTree();
   const flat = flattenBookmarks(tree);
   return JSON.stringify(flat);
+}
+
+// ============================================================================
+// Tab Group Tools
+// ============================================================================
+
+async function toolGetTabGroups() {
+  const groups = await chrome.tabGroups.query({});
+  const tabs = await chrome.tabs.query({});
+  const tabsByGroup = {};
+  for (const tab of tabs) {
+    if (tab.groupId >= 0) {
+      if (!tabsByGroup[tab.groupId]) tabsByGroup[tab.groupId] = [];
+      tabsByGroup[tab.groupId].push({ id: tab.id, url: tab.url, title: tab.title });
+    }
+  }
+  return JSON.stringify(groups.map(g => ({
+    id: g.id, title: g.title || "", color: g.color, collapsed: g.collapsed,
+    windowId: g.windowId, tabs: tabsByGroup[g.id] || [],
+  })));
+}
+
+async function toolCreateTabGroup({ tabIds, title, color = "blue" }) {
+  if (!Array.isArray(tabIds) || !tabIds.length) throw new Error("tabIds array is required");
+  const VALID_COLORS = ["grey","blue","red","yellow","green","pink","purple","cyan","orange"];
+  if (!VALID_COLORS.includes(color)) throw new Error(`color must be one of: ${VALID_COLORS.join(", ")}`);
+  const groupId = await chrome.tabs.group({ tabIds });
+  await chrome.tabGroups.update(groupId, { title: title || undefined, color });
+  return JSON.stringify({ groupId, title: title || "", color });
+}
+
+async function toolUpdateTabGroup({ groupId, title, color, collapsed }) {
+  if (!groupId) throw new Error("groupId is required");
+  const update = {};
+  if (title !== undefined) update.title = title;
+  if (color !== undefined) update.color = color;
+  if (collapsed !== undefined) update.collapsed = collapsed;
+  await chrome.tabGroups.update(groupId, update);
+  return `Tab group ${groupId} updated`;
+}
+
+async function toolMoveToGroup({ tabIds, groupId }) {
+  if (!Array.isArray(tabIds) || !tabIds.length) throw new Error("tabIds array is required");
+  if (!groupId) throw new Error("groupId is required");
+  await chrome.tabs.group({ tabIds, groupId });
+  return `Moved ${tabIds.length} tab(s) to group ${groupId}`;
+}
+
+// ============================================================================
+// CDP Tools (debugger permission)
+// ============================================================================
+
+async function _withDebugger(tabId, fn) {
+  const target = { tabId };
+  await new Promise((resolve, reject) =>
+    chrome.debugger.attach(target, "1.3", () =>
+      chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()
+    )
+  );
+  try {
+    return await fn(target);
+  } finally {
+    await new Promise(resolve => chrome.debugger.detach(target, resolve));
+  }
+}
+
+function cdpSend(target, method, params = {}) {
+  return new Promise((resolve, reject) =>
+    chrome.debugger.sendCommand(target, method, params, (result) =>
+      chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve(result)
+    )
+  );
+}
+
+async function toolPrintToPdf({ tabId, landscape = false, printBackground = true } = {}) {
+  const tab = await getTabById(tabId);
+  const result = await _withDebugger(tab.id, async (target) => {
+    const { data } = await cdpSend(target, "Page.printToPDF", {
+      landscape, printBackground, preferCSSPageSize: true,
+    });
+    return { mimeType: "application/pdf", data, url: tab.url, title: tab.title };
+  });
+  return JSON.stringify(result);
+}
+
+async function toolPerformance({ tabId } = {}) {
+  const tab = await getTabById(tabId);
+  const metrics = await _withDebugger(tab.id, async (target) => {
+    await cdpSend(target, "Performance.enable");
+    const { metrics } = await cdpSend(target, "Performance.getMetrics");
+    const result = {};
+    for (const m of metrics) result[m.name] = m.value;
+    return result;
+  });
+  return JSON.stringify(metrics);
+}
+
+async function toolDeviceEmulate({ tabId, width = 390, height = 844, deviceScaleFactor = 3, mobile = true, userAgent, reset = false } = {}) {
+  const tab = await getTabById(tabId);
+  const msg = await _withDebugger(tab.id, async (target) => {
+    if (reset) {
+      await cdpSend(target, "Emulation.clearDeviceMetricsOverride");
+      return "Device emulation reset to desktop";
+    }
+    await cdpSend(target, "Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor, mobile });
+    if (userAgent) await cdpSend(target, "Emulation.setUserAgentOverride", { userAgent });
+    return `Emulating ${width}x${height} (scale ${deviceScaleFactor}, mobile=${mobile})`;
+  });
+  return msg;
+}
+
+// ============================================================================
+// Page Utilities
+// ============================================================================
+
+async function toolPageText({ tabId, maxLength = 20000 } = {}) {
+  const tab = await getTabById(tabId);
+  const result = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (max) => (document.body?.innerText || "").slice(0, max),
+    args: [maxLength],
+  });
+  const text = result[0]?.result || "";
+  return text.length === maxLength ? text + `\n[truncated at ${maxLength} chars]` : text;
+}
+
+async function toolDeduplicateTabs({ dryRun = false } = {}) {
+  const tabs = await chrome.tabs.query({});
+  const seen = new Map();
+  const toClose = [];
+  for (const tab of tabs) {
+    const key = tab.url?.split("#")[0];
+    if (!key || ["about:blank", "chrome://newtab/"].includes(key)) continue;
+    if (seen.has(key)) {
+      toClose.push({ id: tab.id, url: tab.url, title: tab.title });
+    } else {
+      seen.set(key, tab.id);
+    }
+  }
+  if (!dryRun && toClose.length) await chrome.tabs.remove(toClose.map(t => t.id));
+  return JSON.stringify({ duplicatesFound: toClose.length, closed: !dryRun && toClose.length > 0, tabs: toClose });
+}
+
+async function toolOpenBatch({ urls, active = false } = {}) {
+  if (!Array.isArray(urls) || !urls.length) throw new Error("urls array is required");
+  if (urls.length > 20) throw new Error("Max 20 URLs per batch");
+  for (const url of urls) await assertUrlAllowed(url);
+  const windowId = await getOrCreateAgentWindow();
+  const results = [];
+  for (const url of urls) {
+    const tab = await chrome.tabs.create({ url, active, windowId });
+    results.push({ tabId: tab.id, url });
+  }
+  return JSON.stringify(results);
+}
+
+async function toolStorageInspect({ tabId, store = "local" } = {}) {
+  const tab = await getTabById(tabId);
+  const result = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (s) => {
+      const storage = s === "session" ? sessionStorage : localStorage;
+      const out = {};
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
+        try { out[key] = JSON.parse(storage.getItem(key)); } catch { out[key] = storage.getItem(key); }
+      }
+      return out;
+    },
+    args: [store],
+  });
+  return JSON.stringify(result[0]?.result || {});
+}
+
+// ============================================================================
+// Session Management
+// ============================================================================
+
+async function toolSessionSave({ name = "default" } = {}) {
+  const tabs = await chrome.tabs.query({});
+  const session = tabs
+    .filter(t => t.url && !["about:blank", "chrome://newtab/", ""].includes(t.url))
+    .map(t => ({ url: t.url, title: t.title, pinned: t.pinned }));
+  const key = `session_${name}`;
+  const savedAt = new Date().toISOString();
+  await chrome.storage.local.set({ [key]: { tabs: session, savedAt } });
+  return JSON.stringify({ name, tabCount: session.length, savedAt });
+}
+
+async function toolSessionRestore({ name = "default", newWindow = false } = {}) {
+  const key = `session_${name}`;
+  const data = await chrome.storage.local.get(key);
+  const session = data[key];
+  if (!session) throw new Error(`No session found with name "${name}". Use browser_session_save first.`);
+  const windowId = newWindow ? (await chrome.windows.create({ focused: true })).id : undefined;
+  const results = [];
+  for (const t of session.tabs) {
+    try {
+      await assertUrlAllowed(t.url);
+      const tab = await chrome.tabs.create({ url: t.url, windowId, active: false });
+      results.push({ tabId: tab.id, url: t.url });
+    } catch (e) {
+      results.push({ url: t.url, error: e.message });
+    }
+  }
+  return JSON.stringify({ name, savedAt: session.savedAt, restored: results.length, tabs: results });
+}
+
+// ============================================================================
+// Browser Utilities
+// ============================================================================
+
+async function toolNotify({ title, message, buttons = [] } = {}) {
+  if (!title) throw new Error("title is required");
+  if (!message) throw new Error("message is required");
+  const opts = {
+    type: "basic",
+    iconUrl: "icons/icon128.png",
+    title,
+    message,
+  };
+  if (buttons.length) opts.buttons = buttons.slice(0, 2).map(b => ({ title: String(b) }));
+  return new Promise((resolve, reject) => {
+    chrome.notifications.create("", opts, (id) => {
+      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+      resolve(`Notification sent (id: ${id})`);
+    });
+  });
+}
+
+async function toolStorageRead({ keys, area = "local" } = {}) {
+  const storage = area === "sync" ? chrome.storage.sync : chrome.storage.local;
+  const data = keys ? await storage.get(keys) : await storage.get(null);
+  return JSON.stringify(data);
+}
+
+async function toolDownloads({ limit = 20, query = "" } = {}) {
+  const searchQuery = { limit: Math.min(limit, 100) };
+  if (query) searchQuery.query = [query];
+  const items = await chrome.downloads.search(searchQuery);
+  return JSON.stringify(items.map(d => ({
+    id: d.id,
+    filename: d.filename,
+    url: d.url,
+    state: d.state,
+    totalBytes: d.totalBytes,
+    receivedBytes: d.receivedBytes,
+    startTime: d.startTime,
+    endTime: d.endTime || null,
+    mime: d.mime,
+    danger: d.danger,
+  })));
 }
 
 // ============================================================================

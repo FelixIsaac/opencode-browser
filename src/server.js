@@ -544,6 +544,204 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Get Chrome bookmarks as a structured tree. Returns folders and bookmark entries with titles and URLs.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       inputSchema: { type: "object", properties: {} }
+    },
+    {
+      name: "browser_get_tab_groups",
+      description: "List all Chrome tab groups with their colors, titles, collapse state, and member tabs.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: {} }
+    },
+    {
+      name: "browser_create_tab_group",
+      description: "Create a new tab group from a list of tab IDs. Optionally set a title and color.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabIds: { type: "array", items: { type: "number" }, description: "Tab IDs to group" },
+          title: { type: "string", description: "Group label" },
+          color: { type: "string", enum: ["grey","blue","red","yellow","green","pink","purple","cyan","orange"], description: "Group color (default: blue)" }
+        },
+        required: ["tabIds"]
+      }
+    },
+    {
+      name: "browser_update_tab_group",
+      description: "Rename, recolor, or collapse/expand an existing tab group.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          groupId: { type: "number", description: "Tab group ID (from browser_get_tab_groups)" },
+          title: { type: "string" },
+          color: { type: "string", enum: ["grey","blue","red","yellow","green","pink","purple","cyan","orange"] },
+          collapsed: { type: "boolean" }
+        },
+        required: ["groupId"]
+      }
+    },
+    {
+      name: "browser_move_to_group",
+      description: "Move one or more tabs into an existing tab group.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabIds: { type: "array", items: { type: "number" }, description: "Tab IDs to move" },
+          groupId: { type: "number", description: "Target group ID" }
+        },
+        required: ["tabIds", "groupId"]
+      }
+    },
+    {
+      name: "browser_print_to_pdf",
+      description: "Print the current page to PDF using Chrome's print engine. Returns base64-encoded PDF data.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number", description: "Tab to print (default: agent tab)" },
+          landscape: { type: "boolean", description: "Landscape orientation (default false)" },
+          printBackground: { type: "boolean", description: "Include background graphics (default true)" }
+        }
+      }
+    },
+    {
+      name: "browser_performance",
+      description: "Get Chrome DevTools Performance metrics for a tab: JS heap size, DOM node count, layout count, task durations, etc.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number", description: "Tab ID (default: agent tab)" }
+        }
+      }
+    },
+    {
+      name: "browser_device_emulate",
+      description: "Emulate a mobile device viewport in a tab (useful for testing mobile layouts). Set reset=true to restore desktop.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          width: { type: "number", description: "Viewport width in pixels (default 390 = iPhone 14)" },
+          height: { type: "number", description: "Viewport height (default 844)" },
+          deviceScaleFactor: { type: "number", description: "DPR (default 3)" },
+          mobile: { type: "boolean", description: "Treat as mobile (default true)" },
+          userAgent: { type: "string", description: "Optional user agent override" },
+          reset: { type: "boolean", description: "Reset to desktop viewport (default false)" }
+        }
+      }
+    },
+    {
+      name: "browser_page_text",
+      description: "Extract plain text content (innerText) from a tab. Much cheaper than browser_snapshot for reading page content without needing interactive elements.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number", description: "Tab ID (default: agent tab)" },
+          maxLength: { type: "number", description: "Max characters to return (default 20000)" }
+        }
+      }
+    },
+    {
+      name: "browser_deduplicate_tabs",
+      description: "Find tabs with duplicate URLs (ignoring fragment) and optionally close them, keeping the first occurrence.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          dryRun: { type: "boolean", description: "If true, report duplicates without closing (default false)" }
+        }
+      }
+    },
+    {
+      name: "browser_open_batch",
+      description: "Open multiple URLs as tabs in the agent window. Max 20 URLs per call.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          urls: { type: "array", items: { type: "string" }, description: "URLs to open (max 20)" },
+          active: { type: "boolean", description: "Make tabs active (default false)" }
+        },
+        required: ["urls"]
+      }
+    },
+    {
+      name: "browser_storage_inspect",
+      description: "Read localStorage or sessionStorage contents from a tab. Useful for debugging web app state.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          store: { type: "string", enum: ["local", "session"], description: "Which storage to read (default: local)" }
+        }
+      }
+    },
+    {
+      name: "browser_session_save",
+      description: "Save all currently open tabs as a named session to Chrome storage. Restore later with browser_session_restore.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Session name (default: \"default\")" }
+        }
+      }
+    },
+    {
+      name: "browser_session_restore",
+      description: "Restore a previously saved tab session by name. Opens all saved URLs as new tabs.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Session name to restore (default: \"default\")" },
+          newWindow: { type: "boolean", description: "Open in a new window (default false)" }
+        }
+      }
+    },
+    {
+      name: "browser_notify",
+      description: "Send a Chrome desktop notification with a title and message. Optionally include up to 2 action buttons.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Notification title" },
+          message: { type: "string", description: "Notification body" },
+          buttons: { type: "array", items: { type: "string" }, description: "Up to 2 button labels" }
+        },
+        required: ["title", "message"]
+      }
+    },
+    {
+      name: "browser_storage_read",
+      description: "Read values from Chrome extension storage (local or sync). Useful for inspecting Tandem's own storage or other extension data.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          keys: { type: "array", items: { type: "string" }, description: "Keys to read (omit for all)" },
+          area: { type: "string", enum: ["local", "sync"], description: "Storage area (default: local)" }
+        }
+      }
+    },
+    {
+      name: "browser_downloads",
+      description: "List recent Chrome downloads with filename, URL, state, and size.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max results (default 20, max 100)" },
+          query: { type: "string", description: "Optional search string to filter by filename or URL" }
+        }
+      }
     }
   ]
 }));
@@ -565,6 +763,16 @@ const STRUCTURED_OUTPUT_TOOLS = new Set([
   "browser_recent_browsing",
   "browser_history_stats",
   "browser_get_bookmarks",
+  "browser_get_tab_groups",
+  "browser_deduplicate_tabs",
+  "browser_open_batch",
+  "browser_session_save",
+  "browser_session_restore",
+  "browser_downloads",
+  "browser_performance",
+  "browser_print_to_pdf",
+  "browser_storage_read",
+  "browser_storage_inspect",
 ]);
 
 // Maps MCP tool names to internal tool names used by background.js
@@ -593,6 +801,22 @@ const TOOL_MAP = {
   browser_recent_browsing:   "recent_browsing",
   browser_history_stats:     "history_stats",
   browser_get_bookmarks:     "get_bookmarks",
+  browser_get_tab_groups:    "get_tab_groups",
+  browser_create_tab_group:  "create_tab_group",
+  browser_update_tab_group:  "update_tab_group",
+  browser_move_to_group:     "move_to_group",
+  browser_print_to_pdf:      "print_to_pdf",
+  browser_performance:       "performance",
+  browser_device_emulate:    "device_emulate",
+  browser_page_text:         "page_text",
+  browser_deduplicate_tabs:  "deduplicate_tabs",
+  browser_open_batch:        "open_batch",
+  browser_storage_inspect:   "storage_inspect",
+  browser_session_save:      "session_save",
+  browser_session_restore:   "session_restore",
+  browser_notify:            "notify",
+  browser_storage_read:      "storage_read",
+  browser_downloads:         "downloads",
 };
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

@@ -176,7 +176,7 @@ async function handleToolRequest(request) {
 
   try {
     // Block tools that touch tab content if the target URL is sensitive
-    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove"]);
+    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml"]);
     if (!tablessTools.has(tool)) {
       await assertTabAllowed(args?.tabId ?? null);
     }
@@ -238,6 +238,10 @@ const TOOL_HANDLERS = {
   reading_list_get:     toolReadingListGet,
   reading_list_add:     toolReadingListAdd,
   reading_list_remove:  toolReadingListRemove,
+  system_info:          toolSystemInfo,
+  speak:                toolSpeak,
+  clear_browsing_data:  toolClearBrowsingData,
+  save_mhtml:           toolSaveMhtml,
 };
 
 async function executeTool(toolName, args) {
@@ -1196,6 +1200,62 @@ async function toolReadingListRemove({ url }) {
   if (!url) throw new Error("url is required");
   await chrome.readingList.removeEntry({ url });
   return `Removed from reading list: ${url}`;
+}
+
+// ============================================================================
+// System Info, TTS, Browsing Data & Page Capture Tools
+// ============================================================================
+
+async function toolSystemInfo() {
+  const [cpu, memory, displays] = await Promise.all([
+    chrome.system.cpu.getInfo(),
+    chrome.system.memory.getInfo(),
+    chrome.system.display.getInfo(),
+  ]);
+  return JSON.stringify({
+    cpu: { modelName: cpu.modelName, numOfProcessors: cpu.numOfProcessors, archName: cpu.archName },
+    memory: { capacity: memory.capacity, availableCapacity: memory.availableCapacity },
+    displays: displays.map(d => ({ id: d.id, name: d.name, bounds: d.bounds, workArea: d.workArea, dpiX: d.dpiX, dpiY: d.dpiY, isPrimary: d.isPrimary })),
+  });
+}
+
+async function toolSpeak({ text, rate = 1.0, pitch = 1.0, lang = "en-US", voiceName } = {}) {
+  if (!text) throw new Error("text is required");
+  return new Promise((resolve, reject) => {
+    const opts = { rate, pitch, lang };
+    if (voiceName) opts.voiceName = voiceName;
+    chrome.tts.speak(text, { ...opts, onEvent: (event) => {
+      if (event.type === "end" || event.type === "interrupted" || event.type === "cancelled") resolve(`Spoke: "${text.slice(0, 50)}${text.length > 50 ? "..." : ""}"`);
+      if (event.type === "error") reject(new Error(event.errorMessage || "TTS error"));
+    }});
+  });
+}
+
+async function toolClearBrowsingData({ dataTypes = ["cache"], since = "hour" } = {}) {
+  const VALID_TYPES = ["appcache","cache","cacheStorage","cookies","downloads","fileSystems","formData","history","indexedDB","localStorage","passwords","serviceWorkers","webSQL"];
+  const VALID_SINCE = { hour: 3600000, day: 86400000, week: 604800000, month: 2592000000, all: 0 };
+  const invalid = dataTypes.filter(t => !VALID_TYPES.includes(t));
+  if (invalid.length) throw new Error(`Invalid dataTypes: ${invalid.join(", ")}. Valid: ${VALID_TYPES.join(", ")}`);
+  if (!Object.prototype.hasOwnProperty.call(VALID_SINCE, since)) throw new Error(`since must be one of: ${Object.keys(VALID_SINCE).join(", ")}`);
+  const removalOptions = { since: since === "all" ? 0 : Date.now() - VALID_SINCE[since] };
+  const dataToRemove = {};
+  for (const t of dataTypes) dataToRemove[t] = true;
+  await chrome.browsingData.remove(removalOptions, dataToRemove);
+  return `Cleared ${dataTypes.join(", ")} from the last ${since}`;
+}
+
+async function toolSaveMhtml({ tabId } = {}) {
+  const tab = await getTabById(tabId);
+  const data = await new Promise((resolve, reject) =>
+    chrome.pageCapture.saveAsMHTML({ tabId: tab.id }, (mhtmlData) =>
+      chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve(mhtmlData)
+    )
+  );
+  const bytes = new Uint8Array(data);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  const base64 = btoa(binary);
+  return JSON.stringify({ mimeType: "multipart/related", data: base64, url: tab.url, title: tab.title, size: data.byteLength });
 }
 
 // ============================================================================

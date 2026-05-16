@@ -19,7 +19,13 @@
     "downloads",
     "sessions",
     "topSites",
-    "readingList"
+    "readingList",
+    "system.cpu",
+    "system.memory",
+    "system.display",
+    "tts",
+    "browsingData",
+    "pageCapture"
   ],
   "host_permissions": [
     "<all_urls>"

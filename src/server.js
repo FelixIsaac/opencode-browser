@@ -778,6 +778,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Remove a URL from Chrome's Reading List.",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
       inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }
+    },
+    {
+      name: "browser_system_info",
+      description: "Get system information: CPU model/cores, available RAM, and display configuration.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: {} }
+    },
+    {
+      name: "browser_speak",
+      description: "Speak text aloud using the OS text-to-speech engine. Useful for audio alerts or narrating results.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          text: { type: "string", description: "Text to speak" },
+          rate: { type: "number", description: "Speech rate 0.1–10 (default 1.0)" },
+          pitch: { type: "number", description: "Pitch 0–2 (default 1.0)" },
+          lang: { type: "string", description: "Language code (default en-US)" },
+          voiceName: { type: "string", description: "Optional specific voice name" }
+        },
+        required: ["text"]
+      }
+    },
+    {
+      name: "browser_clear_browsing_data",
+      description: "Clear Chrome browsing data by type and time range. Types: cache, cookies, history, localStorage, downloads, etc.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          dataTypes: { type: "array", items: { type: "string" }, description: "Data types to clear (default: [\"cache\"]). Options: cache, cookies, history, localStorage, downloads, formData, passwords, indexedDB, serviceWorkers, cacheStorage" },
+          since: { type: "string", enum: ["hour", "day", "week", "month", "all"], description: "How far back to clear (default: hour)" }
+        }
+      }
+    },
+    {
+      name: "browser_save_mhtml",
+      description: "Save a tab as MHTML (web archive format) — captures the full page including all subresources in one file. Returns base64-encoded MHTML.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: { tabId: { type: "number", description: "Tab to capture (default: agent tab)" } } }
     }
   ]
 }));
@@ -812,6 +852,8 @@ const STRUCTURED_OUTPUT_TOOLS = new Set([
   "browser_recently_closed",
   "browser_top_sites",
   "browser_reading_list_get",
+  "browser_system_info",
+  "browser_save_mhtml",
 ]);
 
 // Maps MCP tool names to internal tool names used by background.js
@@ -862,6 +904,10 @@ const TOOL_MAP = {
   browser_reading_list_get:    "reading_list_get",
   browser_reading_list_add:    "reading_list_add",
   browser_reading_list_remove: "reading_list_remove",
+  browser_system_info:         "system_info",
+  browser_speak:               "speak",
+  browser_clear_browsing_data: "clear_browsing_data",
+  browser_save_mhtml:          "save_mhtml",
 };
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

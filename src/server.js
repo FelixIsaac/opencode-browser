@@ -216,6 +216,7 @@ const server = new Server(
     capabilities: {
       tools: {},
       logging: {},
+      resources: {},
     },
     instructions: "Browser automation tools for AI agents. Always start with browser_snapshot to read page state before clicking or typing. Use browser_execute sparingly — it runs arbitrary JS with full page trust via chrome.debugger.",
   }

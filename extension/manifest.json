@@ -13,7 +13,9 @@
     "alarms",
     "windows",
     "tabGroups",
-    "debugger"
+    "debugger",
+    "history",
+    "bookmarks"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -504,6 +504,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["key"]
       }
+    },
+    {
+      name: "browser_search_history",
+      description: "Search Chrome browsing history by keyword and/or URL. Returns matching entries with visit counts, titles, and timestamps. Requires the history permission in the extension.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search text to match against URL and title (empty string returns all recent entries)" },
+          startTime: { type: "string", description: "ISO 8601 start date (e.g. 2026-05-01)" },
+          endTime: { type: "string", description: "ISO 8601 end date (e.g. 2026-05-16)" },
+          maxResults: { type: "number", description: "Max results to return (default 100, max 1000)" }
+        },
+        required: []
+      }
+    },
+    {
+      name: "browser_recent_browsing",
+      description: "Get recently visited URLs from Chrome history. Returns entries from the last N hours, sorted by most recent.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          hours: { type: "number", description: "How many hours back to look (default 24)" },
+          maxResults: { type: "number", description: "Max results (default 50)" }
+        },
+        required: []
+      }
+    },
+    {
+      name: "browser_history_stats",
+      description: "Get statistics about Chrome browsing history: total entries, date range, and top visited domains.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: {} }
+    },
+    {
+      name: "browser_get_bookmarks",
+      description: "Get Chrome bookmarks as a structured tree. Returns folders and bookmark entries with titles and URLs.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: {} }
     }
   ]
 }));
@@ -521,6 +561,10 @@ const STRUCTURED_OUTPUT_TOOLS = new Set([
   "browser_open_tab",
   "browser_status",
   "browser_list_claims",
+  "browser_search_history",
+  "browser_recent_browsing",
+  "browser_history_stats",
+  "browser_get_bookmarks",
 ]);
 
 // Maps MCP tool names to internal tool names used by background.js
@@ -545,6 +589,10 @@ const TOOL_MAP = {
   browser_new_window:        "new_window",
   browser_wait_for_selector: "wait_for_selector",
   browser_keyboard:          "keyboard",
+  browser_search_history:    "search_history",
+  browser_recent_browsing:   "recent_browsing",
+  browser_history_stats:     "history_stats",
+  browser_get_bookmarks:     "get_bookmarks",
 };
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

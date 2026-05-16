@@ -176,7 +176,7 @@ async function handleToolRequest(request) {
 
   try {
     // Block tools that touch tab content if the target URL is sensitive
-    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window"]);
+    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks"]);
     if (!tablessTools.has(tool)) {
       await assertTabAllowed(args?.tabId ?? null);
     }
@@ -212,6 +212,10 @@ const TOOL_HANDLERS = {
   new_window:           toolNewWindow,
   wait_for_selector:    toolWaitForSelector,
   keyboard:             toolKeyboard,
+  search_history:       toolSearchHistory,
+  recent_browsing:      toolRecentBrowsing,
+  history_stats:        toolHistoryStats,
+  get_bookmarks:        toolGetBookmarks,
 };
 
 async function executeTool(toolName, args) {
@@ -782,6 +786,98 @@ async function toolKeyboard({ key, selector, tabId, modifiers = [] }) {
   });
   if (!result[0]?.result?.success) throw new Error(result[0]?.result?.error || "Keyboard event failed");
   return `Key "${key}"${modifiers.length ? ` (${modifiers.join("+")})` : ""} sent${selector ? ` to ${selector}` : ""}`;
+}
+
+// ============================================================================
+// History & Bookmarks Tools
+// ============================================================================
+
+async function toolSearchHistory({ query = "", startTime, endTime, maxResults = 100 } = {}) {
+  const searchQuery = {
+    text: query,
+    maxResults: Math.min(maxResults, 1000),
+  };
+  if (startTime) searchQuery.startTime = new Date(startTime).getTime();
+  if (endTime) searchQuery.endTime = new Date(endTime).getTime();
+
+  const items = await chrome.history.search(searchQuery);
+  const results = items.map(item => ({
+    url: item.url,
+    title: item.title || "",
+    visitCount: item.visitCount || 0,
+    lastVisitTime: item.lastVisitTime ? new Date(item.lastVisitTime).toISOString() : null,
+    typedCount: item.typedCount || 0,
+  }));
+  return JSON.stringify(results);
+}
+
+async function toolRecentBrowsing({ hours = 24, maxResults = 50 } = {}) {
+  const startTime = Date.now() - hours * 60 * 60 * 1000;
+  const items = await chrome.history.search({
+    text: "",
+    startTime,
+    maxResults: Math.min(maxResults, 500),
+  });
+  items.sort((a, b) => (b.lastVisitTime || 0) - (a.lastVisitTime || 0));
+  const results = items.map(item => ({
+    url: item.url,
+    title: item.title || "",
+    lastVisitTime: item.lastVisitTime ? new Date(item.lastVisitTime).toISOString() : null,
+    visitCount: item.visitCount || 0,
+  }));
+  return JSON.stringify(results);
+}
+
+async function toolHistoryStats() {
+  const [allItems] = await Promise.all([
+    chrome.history.search({ text: "", maxResults: 10000, startTime: 0 }),
+  ]);
+
+  const domainCounts = {};
+  let earliest = Infinity;
+  let latest = 0;
+
+  for (const item of allItems) {
+    if (item.lastVisitTime) {
+      if (item.lastVisitTime < earliest) earliest = item.lastVisitTime;
+      if (item.lastVisitTime > latest) latest = item.lastVisitTime;
+    }
+    try {
+      const domain = new URL(item.url).hostname;
+      domainCounts[domain] = (domainCounts[domain] || 0) + (item.visitCount || 1);
+    } catch {}
+  }
+
+  const topDomains = Object.entries(domainCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([domain, count]) => ({ domain, visitCount: count }));
+
+  return JSON.stringify({
+    totalEntries: allItems.length,
+    earliestVisit: earliest !== Infinity ? new Date(earliest).toISOString() : null,
+    latestVisit: latest > 0 ? new Date(latest).toISOString() : null,
+    topDomains,
+  });
+}
+
+function flattenBookmarks(nodes, depth = 0) {
+  const results = [];
+  for (const node of nodes) {
+    if (node.url) {
+      results.push({ type: "bookmark", title: node.title || "", url: node.url, depth });
+    } else {
+      results.push({ type: "folder", title: node.title || "", depth, id: node.id });
+      if (node.children) results.push(...flattenBookmarks(node.children, depth + 1));
+    }
+  }
+  return results;
+}
+
+async function toolGetBookmarks() {
+  const tree = await chrome.bookmarks.getTree();
+  const flat = flattenBookmarks(tree);
+  return JSON.stringify(flat);
 }
 
 // ============================================================================

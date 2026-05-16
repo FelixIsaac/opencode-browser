@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4.0 — 2026-05-16
+
+### Added
+
+**Idle & System** (`idle`, `fontSettings`, `management` permissions)
+- `browser_watch_idle` — query user idle state (active/idle/locked) or set detection threshold
+- `browser_list_fonts` — get configured font families per generic category and script
+- `browser_list_extensions` — list all installed Chrome extensions with status and metadata
+
+**CDP: Security, CSS, Audits, Accessibility** (no new permissions — `debugger` already granted)
+- `browser_get_security_state` — TLS cert info, mixed content warnings, safe browsing state
+- `browser_get_computed_styles` — computed CSS property values for any DOM element
+- `browser_get_page_issues` — accessibility violations, mixed content, deprecation warnings via Audits domain
+- `browser_query_accessibility` — find elements by ARIA role and/or accessible name
+
+**Site Control** (`contentSettings`, `webNavigation` permissions)
+- `browser_set_site_permission` — set per-site allow/block for JS, cookies, popups, geolocation, camera, mic, etc.
+- `browser_wait_for_navigation` — event-driven wait for page navigation (replaces polling patterns)
+
 ## 1.3.0 — 2026-05-16
 
 ### Added

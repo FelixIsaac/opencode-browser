@@ -742,6 +742,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           query: { type: "string", description: "Optional search string to filter by filename or URL" }
         }
       }
+    },
+    {
+      name: "browser_recently_closed",
+      description: "List recently closed tabs and windows (up to 25). Returns sessionId for use with browser_restore_session.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: { maxResults: { type: "number", description: "Max entries (default 10, max 25)" } } }
+    },
+    {
+      name: "browser_restore_session",
+      description: "Restore a recently closed tab or window by sessionId (from browser_recently_closed).",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: { type: "object", properties: { sessionId: { type: "string", description: "Session ID from browser_recently_closed" } }, required: ["sessionId"] }
+    },
+    {
+      name: "browser_top_sites",
+      description: "Get the user's most-visited URLs (same data as Chrome new tab page tiles).",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: {} }
+    },
+    {
+      name: "browser_reading_list_get",
+      description: "Get all entries in Chrome's Reading List.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: {} }
+    },
+    {
+      name: "browser_reading_list_add",
+      description: "Add a URL to Chrome's Reading List.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: { url: { type: "string" }, title: { type: "string", description: "Optional title (defaults to URL)" } }, required: ["url"] }
+    },
+    {
+      name: "browser_reading_list_remove",
+      description: "Remove a URL from Chrome's Reading List.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }
     }
   ]
 }));
@@ -773,6 +809,9 @@ const STRUCTURED_OUTPUT_TOOLS = new Set([
   "browser_print_to_pdf",
   "browser_storage_read",
   "browser_storage_inspect",
+  "browser_recently_closed",
+  "browser_top_sites",
+  "browser_reading_list_get",
 ]);
 
 // Maps MCP tool names to internal tool names used by background.js
@@ -815,8 +854,14 @@ const TOOL_MAP = {
   browser_session_save:      "session_save",
   browser_session_restore:   "session_restore",
   browser_notify:            "notify",
-  browser_storage_read:      "storage_read",
-  browser_downloads:         "downloads",
+  browser_storage_read:        "storage_read",
+  browser_downloads:           "downloads",
+  browser_recently_closed:     "recently_closed",
+  browser_restore_session:     "restore_session",
+  browser_top_sites:           "top_sites",
+  browser_reading_list_get:    "reading_list_get",
+  browser_reading_list_add:    "reading_list_add",
+  browser_reading_list_remove: "reading_list_remove",
 };
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

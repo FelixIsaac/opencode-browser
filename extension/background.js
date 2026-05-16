@@ -176,7 +176,7 @@ async function handleToolRequest(request) {
 
   try {
     // Block tools that touch tab content if the target URL is sensitive
-    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads"]);
+    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove"]);
     if (!tablessTools.has(tool)) {
       await assertTabAllowed(args?.tabId ?? null);
     }
@@ -232,6 +232,12 @@ const TOOL_HANDLERS = {
   notify:               toolNotify,
   storage_read:         toolStorageRead,
   downloads:            toolDownloads,
+  recently_closed:      toolRecentlyClosed,
+  restore_session:      toolRestoreSession,
+  top_sites:            toolTopSites,
+  reading_list_get:     toolReadingListGet,
+  reading_list_add:     toolReadingListAdd,
+  reading_list_remove:  toolReadingListRemove,
 };
 
 async function executeTool(toolName, args) {
@@ -1146,6 +1152,50 @@ async function toolDownloads({ limit = 20, query = "" } = {}) {
     mime: d.mime,
     danger: d.danger,
   })));
+}
+
+// ============================================================================
+// Sessions, Top Sites & Reading List Tools
+// ============================================================================
+
+async function toolRecentlyClosed({ maxResults = 10 } = {}) {
+  const sessions = await chrome.sessions.getRecentlyClosed({ maxResults: Math.min(maxResults, 25) });
+  return JSON.stringify(sessions.map(s => ({
+    type: s.tab ? "tab" : "window",
+    sessionId: s.tab?.sessionId ?? s.window?.sessionId,
+    lastModified: s.lastModified,
+    tab: s.tab ? { url: s.tab.url, title: s.tab.title } : null,
+    window: s.window ? { tabCount: s.window.tabs?.length ?? 0, tabs: s.window.tabs?.map(t => ({ url: t.url, title: t.title })) ?? [] } : null,
+  })));
+}
+
+async function toolRestoreSession({ sessionId }) {
+  if (!sessionId) throw new Error("sessionId is required — get one from browser_recently_closed");
+  const session = await chrome.sessions.restore(sessionId);
+  return JSON.stringify({ restored: true, type: session.tab ? "tab" : "window" });
+}
+
+async function toolTopSites() {
+  const sites = await chrome.topSites.get();
+  return JSON.stringify(sites);
+}
+
+async function toolReadingListGet() {
+  const items = await chrome.readingList.query({});
+  return JSON.stringify(items);
+}
+
+async function toolReadingListAdd({ url, title }) {
+  if (!url) throw new Error("url is required");
+  await assertUrlAllowed(url);
+  await chrome.readingList.addEntry({ url, title: title || url, hasBeenRead: false });
+  return `Added to reading list: ${url}`;
+}
+
+async function toolReadingListRemove({ url }) {
+  if (!url) throw new Error("url is required");
+  await chrome.readingList.removeEntry({ url });
+  return `Removed from reading list: ${url}`;
 }
 
 // ============================================================================

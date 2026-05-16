@@ -16,7 +16,10 @@
     "debugger",
     "history",
     "bookmarks",
-    "downloads"
+    "downloads",
+    "sessions",
+    "topSites",
+    "readingList"
   ],
   "host_permissions": [
     "<all_urls>"

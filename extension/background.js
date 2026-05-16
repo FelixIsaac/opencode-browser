@@ -176,7 +176,7 @@ async function handleToolRequest(request) {
 
   try {
     // Block tools that touch tab content if the target URL is sensitive
-    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml", "get_version", "find_tabs", "watch_page_stop", "watch_idle", "list_fonts", "list_extensions", "set_site_permission", "wait_for_navigation"]);
+    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml", "get_version", "find_tabs", "watch_page_stop", "watch_idle", "list_fonts", "list_extensions", "set_site_permission", "wait_for_navigation", "invalidate_cache"]);
     if (!tablessTools.has(tool)) {
       await assertTabAllowed(args?.tabId ?? null);
     }
@@ -259,6 +259,8 @@ const TOOL_HANDLERS = {
   query_accessibility:  toolQueryAccessibility,
   set_site_permission:  toolSetSitePermission,
   wait_for_navigation:  toolWaitForNavigation,
+  snapshot_cached:      toolSnapshotCached,
+  invalidate_cache:     toolInvalidateCache,
 };
 
 async function executeTool(toolName, args) {
@@ -523,6 +525,32 @@ async function toolSnapshot({ tabId }) {
   });
   
   return JSON.stringify(result[0]?.result, null, 2);
+}
+
+// Snapshot cache: keyed by tabId, invalidated when URL changes or TTL expires.
+// Reduces repeated-task token cost for multi-step workflows on the same page.
+const snapshotCache = new Map(); // tabId → {result, url, ts}
+const SNAPSHOT_CACHE_TTL_MS = 30_000;
+
+async function toolSnapshotCached({ tabId }) {
+  const tab = await getTabById(tabId);
+  const cached = snapshotCache.get(tab.id);
+  if (cached && cached.url === tab.url && Date.now() - cached.ts < SNAPSHOT_CACHE_TTL_MS) {
+    return cached.result;
+  }
+  const result = await toolSnapshot({ tabId: tab.id });
+  snapshotCache.set(tab.id, { result, url: tab.url, ts: Date.now() });
+  return result;
+}
+
+async function toolInvalidateCache({ tabId }) {
+  if (tabId !== undefined) {
+    snapshotCache.delete(tabId);
+    return JSON.stringify({ invalidated: [tabId] });
+  }
+  const keys = [...snapshotCache.keys()];
+  snapshotCache.clear();
+  return JSON.stringify({ invalidated: keys });
 }
 
 async function toolGetTabs() {

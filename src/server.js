@@ -11,6 +11,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { createConnection } from "net";
 import { readFileSync } from "fs";
@@ -998,6 +1000,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["url"]
       }
+    },
+    {
+      name: "browser_snapshot_cached",
+      description: "Return the cached accessibility snapshot for a tab (re-uses last result if URL unchanged and < 30 s old). Cheaper than browser_snapshot for multi-step flows on the same page. Falls through to a fresh snapshot on cache miss.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number", description: "Tab ID (omit for default agent tab)" }
+        }
+      }
+    },
+    {
+      name: "browser_invalidate_cache",
+      description: "Invalidate the snapshot cache for a specific tab (or all tabs). Call after actions that mutate the page if you want the next browser_snapshot_cached to reflect the current state.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number", description: "Tab ID to invalidate. Omit to clear all cached snapshots." }
+        }
+      }
     }
   ]
 }));
@@ -1046,6 +1070,7 @@ const STRUCTURED_OUTPUT_TOOLS = new Set([
   "browser_get_page_issues",
   "browser_query_accessibility",
   "browser_wait_for_navigation",
+  "browser_snapshot_cached",
 ]);
 
 // Maps MCP tool names to internal tool names used by background.js
@@ -1117,6 +1142,8 @@ const TOOL_MAP = {
   browser_query_accessibility: "query_accessibility",
   browser_set_site_permission: "set_site_permission",
   browser_wait_for_navigation: "wait_for_navigation",
+  browser_snapshot_cached:     "snapshot_cached",
+  browser_invalidate_cache:    "invalidate_cache",
 };
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
@@ -1189,6 +1216,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       isError: true
     };
   }
+});
+
+// ============================================================================
+// MCP Resources — tandem://agents-guide
+// ============================================================================
+
+function readAgentsGuide() {
+  for (const p of [join(__dirname, "AGENTS.md"), join(__dirname, "../AGENTS.md")]) {
+    try { return readFileSync(p, "utf8"); } catch {}
+  }
+  throw new Error("AGENTS.md not found — reinstall with: npx @felixisaac/tandem install");
+}
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  resources: [{
+    uri: "tandem://agents-guide",
+    name: "Tandem Agents Guide",
+    description: "Full behavioral guide for AI agents using Tandem: workflow patterns, security rules, error recovery.",
+    mimeType: "text/markdown"
+  }]
+}));
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  if (request.params.uri !== "tandem://agents-guide") {
+    throw new Error(`Unknown resource: ${request.params.uri}`);
+  }
+  return {
+    contents: [{
+      uri: "tandem://agents-guide",
+      mimeType: "text/markdown",
+      text: readAgentsGuide()
+    }]
+  };
 });
 
 // ============================================================================

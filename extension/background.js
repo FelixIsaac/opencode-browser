@@ -261,6 +261,21 @@ const TOOL_HANDLERS = {
   wait_for_navigation:  toolWaitForNavigation,
   snapshot_cached:      toolSnapshotCached,
   invalidate_cache:     toolInvalidateCache,
+  hover:                toolHover,
+  select_option:        toolSelectOption,
+  double_click:         toolDoubleClick,
+  right_click:          toolRightClick,
+  drag_drop:            toolDragDrop,
+  dialog_handle:        toolDialogHandle,
+  get_all_cookies:      toolGetAllCookies,
+  set_cookie:           toolSetCookie,
+  delete_cookies:       toolDeleteCookies,
+  network_conditions:   toolNetworkConditions,
+  geolocation:          toolGeolocation,
+  user_agent:           toolUserAgent,
+  inject_script:        toolInjectScript,
+  block_urls:           toolBlockUrls,
+  get_element_info:     toolGetElementInfo,
 };
 
 async function executeTool(toolName, args) {
@@ -1573,6 +1588,252 @@ async function toolWaitForNavigation({ url, timeoutMs = 15000, event = "complete
       }
     }
     chrome.webNavigation[eventName].addListener(listener);
+  });
+}
+
+// ============================================================================
+// Wave 5: Interaction, Network Control & Emulation
+// ============================================================================
+
+async function _getElementCenter(target, selector) {
+  await cdpSend(target, 'DOM.enable');
+  const { root } = await cdpSend(target, 'DOM.getDocument', { depth: 0 });
+  const { nodeId } = await cdpSend(target, 'DOM.querySelector', { nodeId: root.nodeId, selector });
+  if (!nodeId) throw new Error(`Element not found: ${selector}`);
+  const { model } = await cdpSend(target, 'DOM.getBoxModel', { nodeId });
+  return { nodeId, cx: (model.content[0] + model.content[2]) / 2, cy: (model.content[1] + model.content[5]) / 2 };
+}
+
+async function toolHover({ selector, tabId } = {}) {
+  if (!selector) throw new Error('selector is required');
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    const { cx, cy } = await _getElementCenter(target, selector);
+    await cdpSend(target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: cx, y: cy, buttons: 0 });
+    return `Hovered over ${selector}`;
+  });
+}
+
+async function toolSelectOption({ selector, value, label, tabId } = {}) {
+  if (!selector) throw new Error('selector is required');
+  if (value == null && label == null) throw new Error('value or label is required');
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    const setByLabel = label != null
+      ? `var lbl=${JSON.stringify(label)};for(var i=0;i<el.options.length;i++){if(el.options[i].text.trim()===lbl){el.selectedIndex=i;break;}}`
+      : `el.value=${JSON.stringify(value)};`;
+    const expression = `(function(){var el=document.querySelector(${JSON.stringify(selector)});if(!el)return{error:'Element not found: ${selector}'};${setByLabel}el.dispatchEvent(new Event('change',{bubbles:true}));el.dispatchEvent(new Event('input',{bubbles:true}));return{selectedIndex:el.selectedIndex,selectedValue:el.value,selectedLabel:el.options[el.selectedIndex]?el.options[el.selectedIndex].text:null};})()`;
+    const { result } = await cdpSend(target, 'Runtime.evaluate', { expression, returnByValue: true });
+    if (result.value?.error) throw new Error(result.value.error);
+    return JSON.stringify(result.value);
+  });
+}
+
+async function toolDoubleClick({ selector, tabId } = {}) {
+  if (!selector) throw new Error('selector is required');
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    const { cx: x, cy: y } = await _getElementCenter(target, selector);
+    const b = { button: 'left', x, y };
+    await cdpSend(target, 'Input.dispatchMouseEvent', { ...b, type: 'mousePressed', clickCount: 1 });
+    await cdpSend(target, 'Input.dispatchMouseEvent', { ...b, type: 'mouseReleased', clickCount: 1 });
+    await cdpSend(target, 'Input.dispatchMouseEvent', { ...b, type: 'mousePressed', clickCount: 2 });
+    await cdpSend(target, 'Input.dispatchMouseEvent', { ...b, type: 'mouseReleased', clickCount: 2 });
+    await cdpSend(target, 'Input.dispatchMouseEvent', { ...b, type: 'dblclick', clickCount: 2 });
+    return `Double-clicked ${selector}`;
+  });
+}
+
+async function toolRightClick({ selector, tabId } = {}) {
+  if (!selector) throw new Error('selector is required');
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    const { cx: x, cy: y } = await _getElementCenter(target, selector);
+    const b = { button: 'right', x, y, clickCount: 1 };
+    await cdpSend(target, 'Input.dispatchMouseEvent', { ...b, type: 'mousePressed' });
+    await cdpSend(target, 'Input.dispatchMouseEvent', { ...b, type: 'mouseReleased' });
+    return `Right-clicked ${selector}`;
+  });
+}
+
+async function toolDragDrop({ sourceSelector, targetSelector, targetX, targetY, tabId } = {}) {
+  if (!sourceSelector) throw new Error('sourceSelector is required');
+  if (!targetSelector && (targetX == null || targetY == null)) throw new Error('targetSelector or targetX+targetY required');
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    const { cx: sx, cy: sy } = await _getElementCenter(target, sourceSelector);
+    let tx, ty;
+    if (targetSelector) {
+      const c = await _getElementCenter(target, targetSelector);
+      tx = c.cx; ty = c.cy;
+    } else { tx = targetX; ty = targetY; }
+    await cdpSend(target, 'Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', x: sx, y: sy, clickCount: 1 });
+    for (let i = 1; i <= 3; i++) {
+      await cdpSend(target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: sx + (tx - sx) * i / 4, y: sy + (ty - sy) * i / 4, buttons: 1 });
+    }
+    await cdpSend(target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: tx, y: ty, buttons: 1 });
+    await cdpSend(target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', x: tx, y: ty, clickCount: 1 });
+    return `Dragged from ${sourceSelector} to ${targetSelector || `(${tx}, ${ty})`}`;
+  });
+}
+
+async function toolDialogHandle({ tabId, accept = true, promptText } = {}) {
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    try {
+      await cdpSend(target, 'Page.handleJavaScriptDialog', { accept, promptText: promptText || '' });
+      return `Dialog ${accept ? 'accepted' : 'dismissed'}`;
+    } catch (err) {
+      if (/dialog/i.test(err.message)) return 'No dialog was open';
+      throw err;
+    }
+  });
+}
+
+async function _getAnyTabId(tabId) {
+  if (tabId) return tabId;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) throw new Error('No active tab found');
+  return tab.id;
+}
+
+async function toolGetAllCookies({ tabId, domain } = {}) {
+  const tid = await _getAnyTabId(tabId);
+  return await _withDebugger(tid, async (target) => {
+    const { cookies } = await cdpSend(target, 'Network.getAllCookies');
+    const filtered = domain ? cookies.filter(c => c.domain.includes(domain)) : cookies;
+    return JSON.stringify(filtered.map(c => ({
+      name: c.name, value: c.value, domain: c.domain, path: c.path,
+      httpOnly: c.httpOnly, secure: c.secure, expires: c.expires, sameSite: c.sameSite,
+    })));
+  });
+}
+
+async function toolSetCookie({ tabId, name, value, domain, path, secure, httpOnly, sameSite, expirationDate } = {}) {
+  if (!name) throw new Error('name is required');
+  if (value == null) throw new Error('value is required');
+  const tid = await _getAnyTabId(tabId);
+  return await _withDebugger(tid, async (target) => {
+    const cookie = { name, value, path: path || '/', secure: secure || false, httpOnly: httpOnly || false, sameSite: sameSite || 'Lax' };
+    if (domain) cookie.domain = domain;
+    if (expirationDate) cookie.expires = expirationDate;
+    await cdpSend(target, 'Network.setCookies', { cookies: [cookie] });
+    return `Set cookie ${name}${domain ? ' for ' + domain : ''}`;
+  });
+}
+
+async function toolDeleteCookies({ tabId, name, domain, url } = {}) {
+  if (!name) throw new Error('name is required');
+  const tid = await _getAnyTabId(tabId);
+  return await _withDebugger(tid, async (target) => {
+    const params = { name };
+    if (domain) params.domain = domain;
+    if (url) params.url = url;
+    await cdpSend(target, 'Network.deleteCookies', params);
+    return `Deleted cookie ${name}`;
+  });
+}
+
+const NETWORK_PRESETS = {
+  offline:   { offline: true,  latency: 0,    downloadThroughput: 0,               uploadThroughput: 0 },
+  'slow-2g': { offline: false, latency: 2000, downloadThroughput: 50*1024/8,       uploadThroughput: 50*1024/8 },
+  '2g':      { offline: false, latency: 300,  downloadThroughput: 450*1024/8,      uploadThroughput: 150*1024/8 },
+  '3g':      { offline: false, latency: 400,  downloadThroughput: 750*1024/8,      uploadThroughput: 250*1024/8 },
+  'slow-3g': { offline: false, latency: 400,  downloadThroughput: 750*1024/8,      uploadThroughput: 250*1024/8 },
+  'fast-3g': { offline: false, latency: 100,  downloadThroughput: 1.6*1024*1024/8, uploadThroughput: 750*1024/8 },
+  '4g':      { offline: false, latency: 20,   downloadThroughput: 4*1024*1024/8,   uploadThroughput: 3*1024*1024/8 },
+};
+
+async function toolNetworkConditions({ tabId, preset, offline, downloadThroughput, uploadThroughput, latency, reset } = {}) {
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    await cdpSend(target, 'Network.enable');
+    if (reset) {
+      await cdpSend(target, 'Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+      return 'Network conditions reset to normal';
+    }
+    const conds = preset
+      ? (NETWORK_PRESETS[preset] ?? (() => { throw new Error(`Unknown preset: ${preset}. Valid: ${Object.keys(NETWORK_PRESETS).join(', ')}`); })())
+      : { offline: offline || false, latency: latency || 0, downloadThroughput: downloadThroughput ?? -1, uploadThroughput: uploadThroughput ?? -1 };
+    await cdpSend(target, 'Network.emulateNetworkConditions', conds);
+    return `Network conditions set: ${preset || 'custom'} (offline=${conds.offline}, latency=${conds.latency}ms)`;
+  });
+}
+
+async function toolGeolocation({ tabId, latitude, longitude, accuracy, reset } = {}) {
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    if (reset) {
+      await cdpSend(target, 'Emulation.clearGeolocationOverride');
+      return 'Geolocation override cleared';
+    }
+    if (latitude == null || longitude == null) throw new Error('latitude and longitude are required (or set reset: true)');
+    await cdpSend(target, 'Emulation.setGeolocationOverride', { latitude, longitude, accuracy: accuracy || 1 });
+    return `Geolocation set to ${latitude}, ${longitude} (accuracy: ${accuracy || 1}m)`;
+  });
+}
+
+const UA_PRESETS = {
+  'mobile-android': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+  'mobile-ios':     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+};
+
+async function toolUserAgent({ tabId, userAgent, timezoneId, locale, reset } = {}) {
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    const parts = [];
+    if (userAgent !== undefined || reset) {
+      const ua = reset ? '' : (UA_PRESETS[userAgent] || userAgent);
+      await cdpSend(target, 'Emulation.setUserAgentOverride', { userAgent: ua, acceptLanguage: locale || '', platform: '' });
+      parts.push(reset ? 'user agent reset' : `user agent = ${ua.slice(0, 80)}`);
+    }
+    if (timezoneId !== undefined || reset) {
+      await cdpSend(target, 'Emulation.setTimezoneOverride', { timezoneId: reset ? '' : timezoneId });
+      parts.push(reset ? 'timezone reset' : `timezone = ${timezoneId}`);
+    }
+    if (locale !== undefined || reset) {
+      await cdpSend(target, 'Emulation.setLocaleOverride', { locale: reset ? '' : locale });
+      parts.push(reset ? 'locale reset' : `locale = ${locale}`);
+    }
+    if (!parts.length) throw new Error('At least one of userAgent, timezoneId, locale, or reset is required');
+    return parts.join('; ');
+  });
+}
+
+async function toolInjectScript({ tabId, script, worldName } = {}) {
+  if (!script) throw new Error('script is required');
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    const { identifier } = await cdpSend(target, 'Page.addScriptToEvaluateOnNewDocument', {
+      source: script, worldName: worldName || 'main',
+    });
+    return JSON.stringify({ scriptId: identifier, message: 'Script will run on every new document load in this tab' });
+  });
+}
+
+async function toolBlockUrls({ tabId, patterns, reset } = {}) {
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    await cdpSend(target, 'Network.enable');
+    const urls = reset ? [] : (patterns || []);
+    await cdpSend(target, 'Network.setBlockedURLs', { urls });
+    if (reset) return 'URL blocking cleared';
+    return `Blocking ${urls.length} URL pattern(s)${urls.length ? ': ' + urls.slice(0, 3).join(', ') + (urls.length > 3 ? '…' : '') : ''}. Note: applies to requests while debugger is attached.`;
+  });
+}
+
+async function toolGetElementInfo({ selector, tabId } = {}) {
+  if (!selector) throw new Error('selector is required');
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    const { nodeId, cx, cy } = await _getElementCenter(target, selector);
+    const { model } = await cdpSend(target, 'DOM.getBoxModel', { nodeId });
+    const { result } = await cdpSend(target, 'Runtime.evaluate', {
+      expression: `(function(){var el=document.querySelector(${JSON.stringify(selector)});if(!el)return null;var r=el.getBoundingClientRect(),s=window.getComputedStyle(el);return{tagName:el.tagName.toLowerCase(),bounds:{x:r.x,y:r.y,width:r.width,height:r.height,top:r.top,right:r.right,bottom:r.bottom,left:r.left},isVisible:r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0',computedDisplay:s.display,computedVisibility:s.visibility,computedOpacity:s.opacity,zIndex:s.zIndex};})()`,
+      returnByValue: true,
+    });
+    if (!result.value) throw new Error(`Element not found at runtime: ${selector}`);
+    return JSON.stringify({ selector, center: { x: cx, y: cy }, contentQuad: model.content, ...result.value });
   });
 }
 

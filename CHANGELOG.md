@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.5.0 — 2026-05-16
+
+### Added
+
+**Advanced Interaction** (no new permissions — `debugger` covers all CDP)
+- `browser_hover` — trigger mouseover/mousemove on element; essential for hover menus and tooltips
+- `browser_select_option` — select `<select>` dropdown by value or visible label text; dispatches `change`+`input` events
+- `browser_double_click` — double-click element via CDP Input; for text selection, file open, etc.
+- `browser_right_click` — right-click element to open context menu
+- `browser_drag_drop` — drag from source element to target element or coordinates; interpolates 3 move steps
+
+**Dialog & Page Control**
+- `browser_dialog_handle` — accept or dismiss the currently-open `alert`/`confirm`/`prompt` dialog; no-op if no dialog is open
+
+**Cookie Management**
+- `browser_get_all_cookies` — get all browser cookies (not just current tab's URL) via `Network.getAllCookies`, with optional domain filter
+- `browser_set_cookie` — set a cookie with full control (domain, path, secure, httpOnly, sameSite, expiry)
+- `browser_delete_cookies` — delete cookies by name, optionally scoped to domain/URL
+
+**Network & Emulation**
+- `browser_network_conditions` — emulate network throttling with presets: `offline`, `slow-2g`, `2g`, `3g`, `slow-3g`, `fast-3g`, `4g`, or custom bandwidth/latency values
+- `browser_geolocation` — override GPS coordinates via `Emulation.setGeolocationOverride`; `reset:true` clears override
+- `browser_user_agent` — override user agent (built-ins: `mobile-android`, `mobile-ios`), timezone (IANA), and locale; `reset:true` clears all
+
+**Script & Resource Control**
+- `browser_inject_script` — inject JS at `document_start` on every page load via `Page.addScriptToEvaluateOnNewDocument`; returns scriptId
+- `browser_block_urls` — block URL patterns from loading via `Network.setBlockedURLs` (ad networks, analytics, images, etc.); `reset:true` clears
+
+**Inspection**
+- `browser_get_element_info` — get precise bounds, center coordinates, contentQuad, visibility, display, opacity, z-index for any element
+
 ## 1.4.1 — 2026-05-16
 
 ### Added

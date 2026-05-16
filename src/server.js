@@ -1022,6 +1022,223 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           tabId: { type: "number", description: "Tab ID to invalidate. Omit to clear all cached snapshots." }
         }
       }
+    },
+    {
+      name: "browser_hover",
+      description: "Move the mouse over an element by CSS selector, triggering mouseover/mousemove events. Use before clicking menus or tooltips that appear on hover.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          selector: { type: "string", description: "CSS selector for the element to hover" },
+          tabId: { type: "number", description: "Optional tab ID" }
+        },
+        required: ["selector"]
+      }
+    },
+    {
+      name: "browser_select_option",
+      description: "Select an option in a <select> dropdown by value or visible label text. More reliable than browser_click for native dropdowns.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          selector: { type: "string", description: "CSS selector for the <select> element" },
+          value: { type: "string", description: "Option value attribute to select" },
+          label: { type: "string", description: "Visible option text to select (alternative to value)" },
+          tabId: { type: "number" }
+        },
+        required: ["selector"]
+      }
+    },
+    {
+      name: "browser_double_click",
+      description: "Double-click an element by CSS selector. Use for text selection, opening files in file managers, or activating items that require double-click.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          selector: { type: "string", description: "CSS selector for the element" },
+          tabId: { type: "number" }
+        },
+        required: ["selector"]
+      }
+    },
+    {
+      name: "browser_right_click",
+      description: "Right-click an element to trigger a context menu.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          selector: { type: "string", description: "CSS selector for the element" },
+          tabId: { type: "number" }
+        },
+        required: ["selector"]
+      }
+    },
+    {
+      name: "browser_drag_drop",
+      description: "Drag an element from a source selector to a target selector or coordinates. Useful for Kanban boards, sortable lists, and drag-to-upload areas.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          sourceSelector: { type: "string", description: "CSS selector of the element to drag" },
+          targetSelector: { type: "string", description: "CSS selector of the drop target (alternative to targetX/targetY)" },
+          targetX: { type: "number", description: "X coordinate to drop at (alternative to targetSelector)" },
+          targetY: { type: "number", description: "Y coordinate to drop at (alternative to targetSelector)" },
+          tabId: { type: "number" }
+        },
+        required: ["sourceSelector"]
+      }
+    },
+    {
+      name: "browser_dialog_handle",
+      description: "Accept or dismiss the currently-open JavaScript dialog (alert, confirm, or prompt). Call immediately after an action that triggers a dialog. Returns gracefully if no dialog is open.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          accept: { type: "boolean", description: "true to accept/confirm, false to dismiss/cancel (default: true)" },
+          promptText: { type: "string", description: "Text to fill into a prompt() dialog" }
+        }
+      }
+    },
+    {
+      name: "browser_get_all_cookies",
+      description: "Get all cookies in the browser (not just the current tab's URL). Optionally filter by domain.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number", description: "Tab to attach debugger to (optional, uses active tab)" },
+          domain: { type: "string", description: "Filter cookies to this domain (substring match)" }
+        }
+      }
+    },
+    {
+      name: "browser_set_cookie",
+      description: "Set a browser cookie by name, value, and optional domain/path/flags.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          name: { type: "string" },
+          value: { type: "string" },
+          domain: { type: "string", description: "Cookie domain (e.g. .example.com)" },
+          path: { type: "string", description: "Cookie path (default: /)" },
+          secure: { type: "boolean" },
+          httpOnly: { type: "boolean" },
+          sameSite: { type: "string", enum: ["Strict", "Lax", "None"], description: "SameSite policy (default: Lax)" },
+          expirationDate: { type: "number", description: "Unix timestamp for cookie expiry" }
+        },
+        required: ["name", "value"]
+      }
+    },
+    {
+      name: "browser_delete_cookies",
+      description: "Delete cookies by name, optionally scoped to a domain or URL.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          name: { type: "string", description: "Cookie name to delete" },
+          domain: { type: "string", description: "Restrict deletion to this domain" },
+          url: { type: "string", description: "Restrict deletion to this URL" }
+        },
+        required: ["name"]
+      }
+    },
+    {
+      name: "browser_network_conditions",
+      description: "Emulate network conditions: throttle bandwidth, add latency, or go offline. Use preset names (offline, slow-2g, 2g, 3g, slow-3g, fast-3g, 4g) or custom values. Set reset:true to restore normal network.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          preset: { type: "string", enum: ["offline","slow-2g","2g","3g","slow-3g","fast-3g","4g"], description: "Named network preset" },
+          offline: { type: "boolean", description: "Force offline mode (custom only)" },
+          latency: { type: "number", description: "Additional latency in ms (custom only)" },
+          downloadThroughput: { type: "number", description: "Download speed in bytes/s, -1 for unlimited (custom only)" },
+          uploadThroughput: { type: "number", description: "Upload speed in bytes/s, -1 for unlimited (custom only)" },
+          reset: { type: "boolean", description: "Restore normal network conditions" }
+        }
+      }
+    },
+    {
+      name: "browser_geolocation",
+      description: "Override the browser's geolocation (GPS coordinates). Useful for testing location-aware features. Set reset:true to clear the override.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          latitude: { type: "number", description: "Latitude in degrees" },
+          longitude: { type: "number", description: "Longitude in degrees" },
+          accuracy: { type: "number", description: "Accuracy in meters (default: 1)" },
+          reset: { type: "boolean", description: "Clear geolocation override" }
+        }
+      }
+    },
+    {
+      name: "browser_user_agent",
+      description: "Override user agent string, timezone, and/or locale for a tab. Built-in presets: mobile-android, mobile-ios. Set reset:true to restore all defaults.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          userAgent: { type: "string", description: "UA string or preset: mobile-android, mobile-ios" },
+          timezoneId: { type: "string", description: "IANA timezone (e.g. America/New_York, Asia/Singapore)" },
+          locale: { type: "string", description: "Locale string (e.g. en-US, zh-SG)" },
+          reset: { type: "boolean", description: "Reset user agent, timezone, and locale to defaults" }
+        }
+      }
+    },
+    {
+      name: "browser_inject_script",
+      description: "Inject a JavaScript snippet that runs at document start on every new page load in a tab. Returns a scriptId for removal. Useful for monitoring, patching globals, or disabling analytics.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          script: { type: "string", description: "JavaScript source to inject on every new document" },
+          worldName: { type: "string", description: "Execution world: main (default) or isolated" }
+        },
+        required: ["script"]
+      }
+    },
+    {
+      name: "browser_block_urls",
+      description: "Block URL patterns from loading in a tab (e.g. ad networks, analytics, slow resources). Pass reset:true to unblock all. Note: applies for the duration of the debugger session.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          patterns: { type: "array", items: { type: "string" }, description: "URL substring patterns to block (e.g. ['analytics.com', '.png'])" },
+          reset: { type: "boolean", description: "Remove all URL blocks" }
+        }
+      }
+    },
+    {
+      name: "browser_get_element_info",
+      description: "Get precise position, size, visibility, and computed style of a DOM element. Returns bounds, center coordinates, contentQuad, display, visibility, and z-index.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          selector: { type: "string", description: "CSS selector for the element" },
+          tabId: { type: "number" }
+        },
+        required: ["selector"]
+      }
     }
   ]
 }));
@@ -1071,6 +1288,10 @@ const STRUCTURED_OUTPUT_TOOLS = new Set([
   "browser_query_accessibility",
   "browser_wait_for_navigation",
   "browser_snapshot_cached",
+  "browser_select_option",
+  "browser_get_all_cookies",
+  "browser_inject_script",
+  "browser_get_element_info",
 ]);
 
 // Maps MCP tool names to internal tool names used by background.js
@@ -1144,6 +1365,21 @@ const TOOL_MAP = {
   browser_wait_for_navigation: "wait_for_navigation",
   browser_snapshot_cached:     "snapshot_cached",
   browser_invalidate_cache:    "invalidate_cache",
+  browser_hover:               "hover",
+  browser_select_option:       "select_option",
+  browser_double_click:        "double_click",
+  browser_right_click:         "right_click",
+  browser_drag_drop:           "drag_drop",
+  browser_dialog_handle:       "dialog_handle",
+  browser_get_all_cookies:     "get_all_cookies",
+  browser_set_cookie:          "set_cookie",
+  browser_delete_cookies:      "delete_cookies",
+  browser_network_conditions:  "network_conditions",
+  browser_geolocation:         "geolocation",
+  browser_user_agent:          "user_agent",
+  browser_inject_script:       "inject_script",
+  browser_block_urls:          "block_urls",
+  browser_get_element_info:    "get_element_info",
 };
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

@@ -160,8 +160,14 @@ args = ["~/.tandem/server.js"]
 | `browser_screenshot` | Visual capture — use only when layout matters (500–3000 tokens) |
 | `browser_navigate` | Navigate to a URL |
 | `browser_click` | Click an element by CSS selector |
+| `browser_double_click` | Double-click an element (text selection, file open) |
+| `browser_right_click` | Right-click to trigger context menu |
+| `browser_hover` | Hover mouse over element — triggers mouseover/mousemove for hover menus |
+| `browser_drag_drop` | Drag element to target element or coordinates |
+| `browser_select_option` | Select a `<select>` option by value or label text |
 | `browser_type` | Type text into an input |
 | `browser_keyboard` | Send key events (Enter, Escape, Tab, ctrl+a, …) |
+| `browser_dialog_handle` | Accept or dismiss alert/confirm/prompt dialogs |
 | `browser_wait_for_selector` | Wait for element to appear — essential for SPAs |
 | `browser_scroll` | Scroll page or element into view |
 | `browser_wait` | Wait for a fixed duration (capped at 30s) |
@@ -170,6 +176,7 @@ args = ["~/.tandem/server.js"]
 | `browser_print_to_pdf` | Print page to PDF via Chrome's print engine (base64) |
 | `browser_performance` | CDP Performance metrics: heap size, DOM nodes, layout count |
 | `browser_device_emulate` | Emulate mobile viewport via CDP; `reset=true` restores desktop |
+| `browser_get_element_info` | Get precise bounds, center, visibility, and z-index for any element |
 
 ### Tab Management
 | Tool | Description |
@@ -215,6 +222,23 @@ args = ["~/.tandem/server.js"]
 | `browser_downloads` | List recent Chrome downloads |
 | `browser_notify` | Send a Chrome desktop notification (supports buttons) |
 | `browser_storage_read` | Read Chrome extension storage (local or sync) |
+
+### Cookie Management
+| Tool | Description |
+|------|-------------|
+| `browser_get_cookies` | Get cookies for a tab's URL via CDP |
+| `browser_get_all_cookies` | Get all browser cookies (optional domain filter) |
+| `browser_set_cookie` | Set a cookie with full control over flags and expiry |
+| `browser_delete_cookies` | Delete cookies by name, domain, or URL |
+
+### Network & Emulation
+| Tool | Description |
+|------|-------------|
+| `browser_network_conditions` | Throttle bandwidth / add latency / go offline — presets: offline, slow-2g, 2g, 3g, fast-3g, 4g |
+| `browser_geolocation` | Override GPS coordinates; `reset=true` clears |
+| `browser_user_agent` | Override UA string (presets: mobile-android, mobile-ios), timezone, and locale |
+| `browser_inject_script` | Inject JS at document start on every page load; returns scriptId |
+| `browser_block_urls` | Block URL patterns from loading (ads, analytics, images); `reset=true` clears |
 
 ## MCP Resources
 

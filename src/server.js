@@ -1249,7 +1249,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           tabIds: { type: "array", items: { type: "number" }, description: "Tab IDs to run the script on (max 50)" },
-          code: { type: "string", description: "JavaScript expression to evaluate in each tab. Must return a JSON-serialisable value." }
+          code: { type: "string", description: "JavaScript expression to evaluate in each tab. Must return a JSON-serialisable value." },
+          concurrency: { type: "number", description: "Max tabs to run in parallel per batch (default 8, max 16). Lower if hitting timeouts." }
         },
         required: ["tabIds", "code"]
       }

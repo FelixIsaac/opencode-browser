@@ -657,51 +657,40 @@ async function _executeWithDebugger(tabId, code) {
   }
 }
 
-async function toolBatchExecute({ tabIds, code }) {
+async function toolBatchExecute({ tabIds, code, concurrency = 8 }) {
   if (!Array.isArray(tabIds) || tabIds.length === 0) throw new Error("tabIds must be a non-empty array");
   if (!code) throw new Error("code is required");
   if (tabIds.length > 50) throw new Error("tabIds limit is 50");
+  const limit = Math.max(1, Math.min(concurrency, 16));
 
-  // Uses chrome.scripting.executeScript (not CDP debugger) so there's no
-  // per-tab attach/detach overhead — all tabs run truly in parallel.
-  // Trade-off: won't work on pages with strict CSP (unsafe-eval blocked).
-  // For CSP-strict pages, fall back to browser_execute per tab.
-  const results = await Promise.allSettled(
-    tabIds.map(async (tabId) => {
-      const tab = await chrome.tabs.get(tabId).catch(() => null);
-      if (!tab) return { tabId, error: "Tab not found" };
-      if (tab.discarded) return { tabId, error: "Tab is discarded — switch to it first to reload" };
-      await assertUrlAllowed(tab.url);
-
-      const injection = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: (codeStr) => {
-          try {
-            // eslint-disable-next-line no-new-func
-            const val = Function(`"use strict"; return (${codeStr})`)();
-            const json = JSON.stringify(val);
-            if (json.length > 51200) return { ok: false, error: `Result exceeds 50KB (${json.length} bytes)` };
-            return { ok: true, value: val };
-          } catch (e) {
-            return { ok: false, error: e.message };
-          }
-        },
-        args: [code]
-      });
-
-      const r = injection[0]?.result;
-      if (!r) throw new Error("No result from tab");
-      if (!r.ok) throw new Error(r.error);
-      return { tabId, result: r.value };
-    })
-  );
-
+  // Process in batches to avoid overwhelming Chrome's debugger API.
+  // CDP (not scripting API) so it works on CSP-strict pages too.
   const out = {};
-  results.forEach((r, i) => {
-    const id = tabIds[i];
-    if (r.status === "fulfilled") out[id] = r.value;
-    else out[id] = { tabId: id, error: r.reason?.message || String(r.reason) };
-  });
+
+  async function execOne(tabId) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) return { tabId, error: "Tab not found" };
+    if (tab.discarded) return { tabId, error: "Tab is discarded — activate it to reload, then retry" };
+    await assertUrlAllowed(tab.url);
+    const prev = debuggerQueue.get(tabId) ?? Promise.resolve();
+    const curr = prev.then(() => _executeWithDebugger(tabId, code));
+    const tail = curr.then(() => {}, () => {});
+    debuggerQueue.set(tabId, tail);
+    tail.finally(() => { if (debuggerQueue.get(tabId) === tail) debuggerQueue.delete(tabId); });
+    const result = await curr;
+    return { tabId, result: JSON.parse(result) };
+  }
+
+  // Chunked sequential batches, parallel within each chunk
+  for (let i = 0; i < tabIds.length; i += limit) {
+    const chunk = tabIds.slice(i, i + limit);
+    const settled = await Promise.allSettled(chunk.map(id => execOne(id)));
+    settled.forEach((r, j) => {
+      const id = chunk[j];
+      out[id] = r.status === "fulfilled" ? r.value : { tabId: id, error: r.reason?.message || String(r.reason) };
+    });
+  }
+
   return JSON.stringify(out, null, 2);
 }
 

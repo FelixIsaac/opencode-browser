@@ -818,6 +818,54 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Save a tab as MHTML (web archive format) — captures the full page including all subresources in one file. Returns base64-encoded MHTML.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       inputSchema: { type: "object", properties: { tabId: { type: "number", description: "Tab to capture (default: agent tab)" } } }
+    },
+    {
+      name: "browser_console_logs",
+      description: "Capture browser console log entries via CDP Log domain. Attach before triggering page actions for best results.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          timeoutMs: { type: "number", description: "Observation window in ms (default 3000, max 5000)" }
+        }
+      }
+    },
+    {
+      name: "browser_get_cookies",
+      description: "Get cookies for the current tab's URL via CDP. Returns name, value, domain, expiry, httpOnly, secure, sameSite.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          urls: { type: "array", items: { type: "string" }, description: "Filter to specific URLs (default: current tab URL)" }
+        }
+      }
+    },
+    {
+      name: "browser_get_dom",
+      description: "Get the full serialized HTML DOM of a tab (outerHTML via CDP). Useful for structural analysis. Truncated at 200KB.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: { tabId: { type: "number" } } }
+    },
+    {
+      name: "browser_get_version",
+      description: "Get Chrome browser version, protocol version, product name, and user agent string.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: {} }
+    },
+    {
+      name: "browser_clear_storage",
+      description: "Clear web storage for a tab's origin via CDP (localStorage, sessionStorage, IndexedDB, cache storage, etc.).",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number" },
+          storageTypes: { type: "array", items: { type: "string" }, description: "Storage types to clear (default: local_storage, session_storage, cache_storage, indexeddb). Options: cookies, local_storage, session_storage, indexeddb, cache_storage, service_workers, file_systems" }
+        }
+      }
     }
   ]
 }));
@@ -854,6 +902,9 @@ const STRUCTURED_OUTPUT_TOOLS = new Set([
   "browser_reading_list_get",
   "browser_system_info",
   "browser_save_mhtml",
+  "browser_get_cookies",
+  "browser_get_dom",
+  "browser_get_version",
 ]);
 
 // Maps MCP tool names to internal tool names used by background.js
@@ -908,6 +959,11 @@ const TOOL_MAP = {
   browser_speak:               "speak",
   browser_clear_browsing_data: "clear_browsing_data",
   browser_save_mhtml:          "save_mhtml",
+  browser_console_logs:        "console_logs",
+  browser_get_cookies:         "get_cookies",
+  browser_get_dom:             "get_dom",
+  browser_get_version:         "get_version",
+  browser_clear_storage:       "clear_storage",
 };
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

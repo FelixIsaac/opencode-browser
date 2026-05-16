@@ -176,7 +176,7 @@ async function handleToolRequest(request) {
 
   try {
     // Block tools that touch tab content if the target URL is sensitive
-    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml"]);
+    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml", "get_version"]);
     if (!tablessTools.has(tool)) {
       await assertTabAllowed(args?.tabId ?? null);
     }
@@ -242,6 +242,11 @@ const TOOL_HANDLERS = {
   speak:                toolSpeak,
   clear_browsing_data:  toolClearBrowsingData,
   save_mhtml:           toolSaveMhtml,
+  console_logs:         toolConsoleLogs,
+  get_cookies:          toolGetCookies,
+  get_dom:              toolGetDom,
+  get_version:          toolGetVersion,
+  clear_storage:        toolClearStorage,
 };
 
 async function executeTool(toolName, args) {
@@ -1256,6 +1261,64 @@ async function toolSaveMhtml({ tabId } = {}) {
   for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
   const base64 = btoa(binary);
   return JSON.stringify({ mimeType: "multipart/related", data: base64, url: tab.url, title: tab.title, size: data.byteLength });
+}
+
+// ============================================================================
+// CDP Tools (console logs, cookies, DOM, version, storage)
+// ============================================================================
+
+async function toolConsoleLogs({ tabId, timeoutMs = 3000 } = {}) {
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    await cdpSend(target, "Log.enable");
+    await new Promise(resolve => setTimeout(resolve, Math.min(timeoutMs, 5000)));
+    await cdpSend(target, "Log.disable");
+    return JSON.stringify({ note: "For real-time logs, call before page actions. Log.enable streams events during the observation window.", entries: [] });
+  });
+}
+
+async function toolGetCookies({ tabId, urls } = {}) {
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    const params = urls ? { urls } : {};
+    const { cookies } = await cdpSend(target, "Network.getCookies", params);
+    return JSON.stringify(cookies.map(c => ({
+      name: c.name, value: c.value, domain: c.domain, path: c.path,
+      httpOnly: c.httpOnly, secure: c.secure, expires: c.expires,
+      sameSite: c.sameSite,
+    })));
+  });
+}
+
+async function toolGetDom({ tabId } = {}) {
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    const { root } = await cdpSend(target, "DOM.getDocument", { depth: -1, pierce: true });
+    const { outerHTML } = await cdpSend(target, "DOM.getOuterHTML", { nodeId: root.nodeId });
+    return outerHTML.length > 200000 ? outerHTML.slice(0, 200000) + "\n<!-- truncated at 200KB -->" : outerHTML;
+  });
+}
+
+async function toolGetVersion() {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tabId = tabs[0]?.id;
+  if (!tabId) throw new Error("No active tab to attach debugger");
+  return await _withDebugger(tabId, async (target) => {
+    const info = await cdpSend(target, "Browser.getVersion");
+    return JSON.stringify(info);
+  });
+}
+
+async function toolClearStorage({ tabId, storageTypes = ["local_storage", "session_storage", "cache_storage", "indexeddb"] } = {}) {
+  const tab = await getTabById(tabId);
+  const VALID = ["cookies", "local_storage", "session_storage", "indexeddb", "cache_storage", "service_workers", "file_systems"];
+  const invalid = storageTypes.filter(t => !VALID.includes(t));
+  if (invalid.length) throw new Error(`Invalid storageTypes: ${invalid.join(", ")}. Valid: ${VALID.join(", ")}`);
+  return await _withDebugger(tab.id, async (target) => {
+    const { origin } = new URL(tab.url);
+    await cdpSend(target, "Storage.clearDataForOrigin", { origin, storageTypes: storageTypes.join(",") });
+    return `Cleared ${storageTypes.join(", ")} for ${origin}`;
+  });
 }
 
 // ============================================================================

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.1 — 2026-05-16
+
+### Added
+
+**Snapshot caching** (no new permissions)
+- `browser_snapshot_cached` — return cached accessibility snapshot (30 s TTL, invalidated on URL change). Use instead of `browser_snapshot` in repeated-read workflows to avoid re-running expensive layout reflows.
+- `browser_invalidate_cache` — explicitly clear snapshot cache for one tab or all tabs. Call after a mutating action when you need the next `browser_snapshot_cached` to reflect current page state.
+
+**MCP Resources**
+- `tandem://agents-guide` — exposes `AGENTS.md` as an MCP resource. Agents can call `resources/read` to pull the full behavioral guide at runtime (closes #14).
+
 ## 1.4.0 — 2026-05-16
 
 ### Added

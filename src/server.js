@@ -1240,6 +1240,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["selector"]
       }
+    },
+    {
+      name: "browser_batch_execute",
+      description: "Run the same JavaScript snippet across multiple tabs in parallel and return a map of tabId → result. Use this to extract structured data (JSON-LD, meta tags, page state) from many already-open tabs in a single call. Max 50 tabs. Result is capped at 50KB per tab. URL blocklist is enforced per tab.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabIds: { type: "array", items: { type: "number" }, description: "Tab IDs to run the script on (max 50)" },
+          code: { type: "string", description: "JavaScript expression to evaluate in each tab. Must return a JSON-serialisable value." }
+        },
+        required: ["tabIds", "code"]
+      }
     }
   ]
 }));
@@ -1293,6 +1306,7 @@ const STRUCTURED_OUTPUT_TOOLS = new Set([
   "browser_get_all_cookies",
   "browser_inject_script",
   "browser_get_element_info",
+  "browser_batch_execute",
 ]);
 
 // Maps MCP tool names to internal tool names used by background.js
@@ -1381,6 +1395,7 @@ const TOOL_MAP = {
   browser_inject_script:       "inject_script",
   browser_block_urls:          "block_urls",
   browser_get_element_info:    "get_element_info",
+  browser_batch_execute:       "batch_execute",
 };
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

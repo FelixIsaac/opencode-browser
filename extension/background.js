@@ -176,7 +176,7 @@ async function handleToolRequest(request) {
 
   try {
     // Block tools that touch tab content if the target URL is sensitive
-    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml", "get_version", "find_tabs", "watch_page_stop", "watch_idle", "list_fonts", "list_extensions", "set_site_permission", "wait_for_navigation", "invalidate_cache"]);
+    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml", "get_version", "find_tabs", "watch_page_stop", "watch_idle", "list_fonts", "list_extensions", "set_site_permission", "wait_for_navigation", "invalidate_cache", "batch_execute"]);
     if (!tablessTools.has(tool)) {
       await assertTabAllowed(args?.tabId ?? null);
     }
@@ -276,6 +276,7 @@ const TOOL_HANDLERS = {
   inject_script:        toolInjectScript,
   block_urls:           toolBlockUrls,
   get_element_info:     toolGetElementInfo,
+  batch_execute:        toolBatchExecute,
 };
 
 async function executeTool(toolName, args) {
@@ -654,6 +655,35 @@ async function _executeWithDebugger(tabId, code) {
   } finally {
     await new Promise(resolve => chrome.debugger.detach(target, resolve));
   }
+}
+
+async function toolBatchExecute({ tabIds, code }) {
+  if (!Array.isArray(tabIds) || tabIds.length === 0) throw new Error("tabIds must be a non-empty array");
+  if (!code) throw new Error("code is required");
+  if (tabIds.length > 50) throw new Error("tabIds limit is 50");
+
+  const results = await Promise.allSettled(
+    tabIds.map(async (tabId) => {
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      if (!tab) return { tabId, error: "Tab not found" };
+      await assertUrlAllowed(tab.url);
+      const prev = debuggerQueue.get(tabId) ?? Promise.resolve();
+      const curr = prev.then(() => _executeWithDebugger(tabId, code));
+      const tail = curr.then(() => {}, () => {});
+      debuggerQueue.set(tabId, tail);
+      tail.finally(() => { if (debuggerQueue.get(tabId) === tail) debuggerQueue.delete(tabId); });
+      const result = await curr;
+      return { tabId, result: JSON.parse(result) };
+    })
+  );
+
+  const out = {};
+  results.forEach((r, i) => {
+    const id = tabIds[i];
+    if (r.status === "fulfilled") out[id] = r.value;
+    else out[id] = { tabId: id, error: r.reason?.message || String(r.reason) };
+  });
+  return JSON.stringify(out, null, 2);
 }
 
 async function toolScroll({ x = 0, y = 0, selector, tabId }) {

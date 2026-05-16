@@ -154,6 +154,8 @@ args = ["~/.tandem/server.js"]
 | Tool | Description |
 |------|-------------|
 | `browser_snapshot` | **Start here.** Accessibility tree with CSS selectors — low token cost (200–1500 tokens) |
+| `browser_snapshot_cached` | Cached snapshot — re-uses last result if URL unchanged and < 30 s old. Use in multi-step flows to skip re-layout |
+| `browser_invalidate_cache` | Clear snapshot cache for a tab (or all tabs) — call after mutating actions |
 | `browser_page_text` | Plain text (innerText) — cheapest way to read page content |
 | `browser_screenshot` | Visual capture — use only when layout matters (500–3000 tokens) |
 | `browser_navigate` | Navigate to a URL |
@@ -213,6 +215,12 @@ args = ["~/.tandem/server.js"]
 | `browser_downloads` | List recent Chrome downloads |
 | `browser_notify` | Send a Chrome desktop notification (supports buttons) |
 | `browser_storage_read` | Read Chrome extension storage (local or sync) |
+
+## MCP Resources
+
+| URI | Description |
+|-----|-------------|
+| `tandem://agents-guide` | Full `AGENTS.md` behavioral guide — fetch via `resources/read` for runtime agent context |
 
 ## Per-tab Ownership
 

@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.2.0 — 2026-05-16
+
+### Added
+
+**History & Bookmarks** (`history` + `bookmarks` permissions)
+- `browser_search_history` — search by keyword, URL, date range
+- `browser_recent_browsing` — visits from last N hours
+- `browser_history_stats` — total entries, date range, top 20 domains
+- `browser_get_bookmarks` — full bookmarks tree (read-only)
+
+**Tab Groups** (`tabGroups` permission, already granted)
+- `browser_get_tab_groups` — list all groups with colors, titles, member tabs
+- `browser_create_tab_group` — create group from tab IDs with title + color
+- `browser_update_tab_group` — rename, recolor, collapse/expand
+- `browser_move_to_group` — move tabs into an existing group
+
+**CDP Tools** (`debugger` permission, already granted)
+- `browser_print_to_pdf` — print page to PDF via `Page.printToPDF` (base64)
+- `browser_performance` — CDP Performance domain metrics (heap, DOM nodes, layout count)
+- `browser_device_emulate` — mobile viewport emulation via `Emulation.*`; reset to desktop with `reset=true`
+
+**Page Utilities** (no new permissions)
+- `browser_page_text` — extract `innerText` from a tab; cheaper than snapshot for reading tasks
+- `browser_deduplicate_tabs` — find and close duplicate-URL tabs (supports `dryRun`)
+- `browser_open_batch` — open up to 20 URLs as tabs in one call
+- `browser_storage_inspect` — read `localStorage` or `sessionStorage` from a tab
+
+**Session Management** (`storage` permission, already granted)
+- `browser_session_save` — snapshot all open tab URLs to Chrome storage by name
+- `browser_session_restore` — reopen a saved session (skips blocklisted URLs)
+
+**Browser Utilities**
+- `browser_notify` — send a Chrome desktop notification with optional buttons
+- `browser_storage_read` — read Chrome extension storage (local or sync)
+- `browser_downloads` — list recent downloads (`downloads` permission added)
+
 ## 1.1.0 — 2026-04-26
 
 ### Added

@@ -150,9 +150,11 @@ args = ["~/.tandem/server.js"]
 
 ## Available Tools
 
+### Page Interaction
 | Tool | Description |
 |------|-------------|
 | `browser_snapshot` | **Start here.** Accessibility tree with CSS selectors — low token cost (200–1500 tokens) |
+| `browser_page_text` | Plain text (innerText) — cheapest way to read page content |
 | `browser_screenshot` | Visual capture — use only when layout matters (500–3000 tokens) |
 | `browser_navigate` | Navigate to a URL |
 | `browser_click` | Click an element by CSS selector |
@@ -162,6 +164,14 @@ args = ["~/.tandem/server.js"]
 | `browser_scroll` | Scroll page or element into view |
 | `browser_wait` | Wait for a fixed duration (capped at 30s) |
 | `browser_execute` | Run JavaScript via `chrome.debugger` — works on all pages including CSP-strict sites |
+| `browser_storage_inspect` | Read localStorage or sessionStorage from a tab |
+| `browser_print_to_pdf` | Print page to PDF via Chrome's print engine (base64) |
+| `browser_performance` | CDP Performance metrics: heap size, DOM nodes, layout count |
+| `browser_device_emulate` | Emulate mobile viewport via CDP; `reset=true` restores desktop |
+
+### Tab Management
+| Tool | Description |
+|------|-------------|
 | `browser_status` | Show connection status + current tab claims |
 | `browser_list_claims` | List per-session tab ownership claims |
 | `browser_claim_tab` | Claim a specific tab for this session |
@@ -171,7 +181,38 @@ args = ["~/.tandem/server.js"]
 | `browser_new_tab` | Open a new tab in the agent window |
 | `browser_close_tab` | Close a tab |
 | `browser_switch_tab` | Focus a tab (use to hand off to user) |
-| `browser_new_window` | Open a new browser window |
+| `browser_new_window` | Open a new browser window (supports incognito) |
+| `browser_open_batch` | Open up to 20 URLs as tabs in one call |
+| `browser_deduplicate_tabs` | Find and close duplicate-URL tabs (supports dry-run) |
+
+### Tab Groups
+| Tool | Description |
+|------|-------------|
+| `browser_get_tab_groups` | List all tab groups with colors, titles, and member tabs |
+| `browser_create_tab_group` | Create a new group from tab IDs with optional title and color |
+| `browser_update_tab_group` | Rename, recolor, or collapse/expand a group |
+| `browser_move_to_group` | Move tabs into an existing group |
+
+### Sessions
+| Tool | Description |
+|------|-------------|
+| `browser_session_save` | Save all open tabs as a named session to Chrome storage |
+| `browser_session_restore` | Restore a saved session (opens all saved URLs) |
+
+### History & Bookmarks
+| Tool | Description |
+|------|-------------|
+| `browser_search_history` | Search history by keyword, URL, and date range |
+| `browser_recent_browsing` | Recent visits from the last N hours |
+| `browser_history_stats` | Total entries, date range, top visited domains |
+| `browser_get_bookmarks` | Full bookmarks tree |
+
+### Browser Utilities
+| Tool | Description |
+|------|-------------|
+| `browser_downloads` | List recent Chrome downloads |
+| `browser_notify` | Send a Chrome desktop notification (supports buttons) |
+| `browser_storage_read` | Read Chrome extension storage (local or sync) |
 
 ## Per-tab Ownership
 

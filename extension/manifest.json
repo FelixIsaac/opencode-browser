@@ -25,7 +25,12 @@
     "system.display",
     "tts",
     "browsingData",
-    "pageCapture"
+    "pageCapture",
+    "idle",
+    "fontSettings",
+    "management",
+    "contentSettings",
+    "webNavigation"
   ],
   "host_permissions": [
     "<all_urls>"

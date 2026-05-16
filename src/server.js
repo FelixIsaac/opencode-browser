@@ -903,6 +903,101 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: { tabId: { type: "number", description: "Tab ID to stop watching" } },
         required: ["tabId"]
       }
+    },
+    {
+      name: "browser_watch_idle",
+      description: "Query the user's idle state (active/idle/locked) or set the idle detection interval. Useful for pausing expensive polling when the user is away.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          detectionIntervalSeconds: { type: "number", description: "Seconds of inactivity before 'idle' (min 15, default 60)" },
+          action: { type: "string", enum: ["query", "set"], description: "query = get current state, set = update threshold (default: query)" }
+        }
+      }
+    },
+    {
+      name: "browser_get_security_state",
+      description: "Get the security state of a tab via CDP: TLS certificate info, mixed content warnings, safe browsing status.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: { tabId: { type: "number", description: "Tab ID (default: agent tab)" } } }
+    },
+    {
+      name: "browser_list_fonts",
+      description: "Get the configured font families for each generic font category (standard, serif, sans-serif, monospace, etc.) across common scripts.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: {} }
+    },
+    {
+      name: "browser_list_extensions",
+      description: "List all installed Chrome extensions and apps with their name, version, enabled status, and type.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          includeDisabled: { type: "boolean", description: "Include disabled extensions (default true)" }
+        }
+      }
+    },
+    {
+      name: "browser_get_computed_styles",
+      description: "Get computed CSS styles for a DOM element via CDP. Returns all computed property values for the matched element.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          selector: { type: "string", description: "CSS selector for the element" },
+          tabId: { type: "number", description: "Tab ID (default: agent tab)" }
+        },
+        required: ["selector"]
+      }
+    },
+    {
+      name: "browser_get_page_issues",
+      description: "Capture browser-detected page issues via CDP Audits domain: accessibility violations, mixed content, deprecation warnings, cookie issues.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: { type: "object", properties: { tabId: { type: "number" } } }
+    },
+    {
+      name: "browser_query_accessibility",
+      description: "Find elements in the accessibility tree by role and/or accessible name. More semantic than CSS selectors — use for finding buttons, inputs, and landmarks by their label.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          role: { type: "string", description: "ARIA role to match (e.g. button, textbox, heading, link, checkbox)" },
+          name: { type: "string", description: "Accessible name to match (e.g. 'Submit', 'Search')" },
+          tabId: { type: "number" }
+        }
+      }
+    },
+    {
+      name: "browser_set_site_permission",
+      description: "Set per-site content permissions (allow/block/ask) for JavaScript, cookies, popups, geolocation, notifications, camera, microphone, etc.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "Site URL (e.g. https://example.com)" },
+          setting: { type: "string", enum: ["javascript","cookies","images","popups","geolocation","notifications","camera","microphone","automaticDownloads"], description: "Permission type" },
+          value: { type: "string", enum: ["allow","block","ask","default","session_only"], description: "Permission value" }
+        },
+        required: ["url", "setting", "value"]
+      }
+    },
+    {
+      name: "browser_wait_for_navigation",
+      description: "Wait until a navigation matching a URL substring occurs in any tab. Use after triggering a click/form submission to wait for the result page.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "URL substring to match (e.g. '/dashboard' or 'example.com/success')" },
+          timeoutMs: { type: "number", description: "Timeout in ms (default 15000)" },
+          event: { type: "string", enum: ["committed", "dom_content_loaded", "completed"], description: "Navigation lifecycle event to wait for (default: completed)" }
+        },
+        required: ["url"]
+      }
     }
   ]
 }));
@@ -943,6 +1038,14 @@ const STRUCTURED_OUTPUT_TOOLS = new Set([
   "browser_get_dom",
   "browser_get_version",
   "browser_find_tabs",
+  "browser_watch_idle",
+  "browser_get_security_state",
+  "browser_list_fonts",
+  "browser_list_extensions",
+  "browser_get_computed_styles",
+  "browser_get_page_issues",
+  "browser_query_accessibility",
+  "browser_wait_for_navigation",
 ]);
 
 // Maps MCP tool names to internal tool names used by background.js
@@ -1005,6 +1108,15 @@ const TOOL_MAP = {
   browser_find_tabs:           "find_tabs",
   browser_watch_page_start:    "watch_page_start",
   browser_watch_page_stop:     "watch_page_stop",
+  browser_watch_idle:          "watch_idle",
+  browser_get_security_state:  "get_security_state",
+  browser_list_fonts:          "list_fonts",
+  browser_list_extensions:     "list_extensions",
+  browser_get_computed_styles: "get_computed_styles",
+  browser_get_page_issues:     "get_page_issues",
+  browser_query_accessibility: "query_accessibility",
+  browser_set_site_permission: "set_site_permission",
+  browser_wait_for_navigation: "wait_for_navigation",
 };
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

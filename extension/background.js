@@ -176,7 +176,7 @@ async function handleToolRequest(request) {
 
   try {
     // Block tools that touch tab content if the target URL is sensitive
-    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml", "get_version", "find_tabs", "watch_page_stop"]);
+    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml", "get_version", "find_tabs", "watch_page_stop", "watch_idle", "list_fonts", "list_extensions", "set_site_permission", "wait_for_navigation"]);
     if (!tablessTools.has(tool)) {
       await assertTabAllowed(args?.tabId ?? null);
     }
@@ -250,6 +250,15 @@ const TOOL_HANDLERS = {
   find_tabs:            toolFindTabs,
   watch_page_start:     toolWatchPageStart,
   watch_page_stop:      toolWatchPageStop,
+  watch_idle:           toolWatchIdle,
+  get_security_state:   toolGetSecurityState,
+  list_fonts:           toolListFonts,
+  list_extensions:      toolListExtensions,
+  get_computed_styles:  toolGetComputedStyles,
+  get_page_issues:      toolGetPageIssues,
+  query_accessibility:  toolQueryAccessibility,
+  set_site_permission:  toolSetSitePermission,
+  wait_for_navigation:  toolWaitForNavigation,
 };
 
 async function executeTool(toolName, args) {
@@ -1401,6 +1410,143 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     console.warn(`[Tandem] Page watcher error for tab ${tabId}:`, e.message);
   }
 });
+
+// ============================================================================
+// Idle, Security, Fonts, Extensions, CSS, Audits, Accessibility, Permissions, Navigation
+// ============================================================================
+
+async function toolWatchIdle({ detectionIntervalSeconds = 60, action = "query" } = {}) {
+  if (action === "set") {
+    chrome.idle.setDetectionInterval(Math.max(15, detectionIntervalSeconds));
+    return `Idle detection interval set to ${detectionIntervalSeconds}s`;
+  }
+  const state = await new Promise(resolve => chrome.idle.queryState(Math.max(15, detectionIntervalSeconds), resolve));
+  return JSON.stringify({ state, detectionIntervalSeconds });
+}
+
+async function toolGetSecurityState({ tabId } = {}) {
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    await cdpSend(target, "Security.enable");
+    const state = await cdpSend(target, "Security.getSecurityState");
+    await cdpSend(target, "Security.disable");
+    return JSON.stringify(state);
+  });
+}
+
+async function toolListFonts() {
+  const GENERIC_FAMILIES = ["standard","sansserif","serif","fixed","cursive","fantasy","math"];
+  const SCRIPTS = ["Zyyy","Latn","Hans","Cyrl","Grek","Hebr","Arab","Jpan","Kore"];
+  const results = {};
+  for (const family of GENERIC_FAMILIES) {
+    results[family] = {};
+    for (const script of SCRIPTS) {
+      try {
+        const { fontId } = await chrome.fontSettings.getFont({ genericFamily: family, script });
+        results[family][script] = fontId;
+      } catch {}
+    }
+  }
+  return JSON.stringify(results);
+}
+
+async function toolListExtensions({ includeDisabled = true } = {}) {
+  const all = await chrome.management.getAll();
+  const filtered = includeDisabled ? all : all.filter(e => e.enabled);
+  return JSON.stringify(filtered.map(e => ({
+    id: e.id,
+    name: e.name,
+    version: e.version,
+    enabled: e.enabled,
+    type: e.type,
+    description: e.description?.slice(0, 100) || "",
+    homepageUrl: e.homepageUrl || null,
+  })));
+}
+
+async function toolGetComputedStyles({ selector, tabId } = {}) {
+  if (!selector) throw new Error("selector is required");
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    await cdpSend(target, "DOM.enable");
+    await cdpSend(target, "CSS.enable");
+    const { root } = await cdpSend(target, "DOM.getDocument", { depth: 0 });
+    const { nodeId } = await cdpSend(target, "DOM.querySelector", { nodeId: root.nodeId, selector });
+    if (!nodeId) throw new Error(`Element not found: ${selector}`);
+    const { computedStyle } = await cdpSend(target, "CSS.getComputedStyleForNode", { nodeId });
+    await cdpSend(target, "CSS.disable");
+    await cdpSend(target, "DOM.disable");
+    const meaningful = computedStyle.filter(p => p.value && p.value !== "");
+    return JSON.stringify(Object.fromEntries(meaningful.map(p => [p.name, p.value])));
+  });
+}
+
+async function toolGetPageIssues({ tabId } = {}) {
+  const tab = await getTabById(tabId);
+  const issues = [];
+  return await _withDebugger(tab.id, async (target) => {
+    await cdpSend(target, "Audits.enable");
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    await cdpSend(target, "Audits.disable");
+    return JSON.stringify({ note: "Issues are event-driven. Trigger page interactions after calling to capture runtime issues.", url: tab.url, issues });
+  });
+}
+
+async function toolQueryAccessibility({ role, name, tabId } = {}) {
+  if (!role && !name) throw new Error("At least one of role or name is required");
+  const tab = await getTabById(tabId);
+  return await _withDebugger(tab.id, async (target) => {
+    await cdpSend(target, "Accessibility.enable");
+    const params = {};
+    if (role) params.role = { type: "string", value: role };
+    if (name) params.name = { type: "string", value: name };
+    const { nodes } = await cdpSend(target, "Accessibility.queryAXTree", params);
+    await cdpSend(target, "Accessibility.disable");
+    return JSON.stringify(nodes.map(n => ({
+      nodeId: n.nodeId,
+      role: n.role?.value,
+      name: n.name?.value,
+      description: n.description?.value,
+      backendDOMNodeId: n.backendDOMNodeId,
+    })));
+  });
+}
+
+async function toolSetSitePermission({ url, setting, value } = {}) {
+  const VALID_SETTINGS = ["javascript","cookies","images","popups","geolocation","notifications","camera","microphone","automaticDownloads"];
+  const VALID_VALUES = ["allow","block","ask","default","session_only"];
+  if (!url) throw new Error("url is required (e.g. https://example.com)");
+  if (!setting || !VALID_SETTINGS.includes(setting)) throw new Error(`setting must be one of: ${VALID_SETTINGS.join(", ")}`);
+  if (!value || !VALID_VALUES.includes(value)) throw new Error(`value must be one of: ${VALID_VALUES.join(", ")}`);
+  const details = { primaryUrl: url, setting: value };
+  await new Promise((resolve, reject) =>
+    chrome.contentSettings[setting].set(details, () =>
+      chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()
+    )
+  );
+  return `Set ${setting} to "${value}" for ${url}`;
+}
+
+async function toolWaitForNavigation({ url, timeoutMs = 15000, event = "completed" } = {}) {
+  if (!url) throw new Error("url is required");
+  const eventName = { committed: "onCommitted", dom_content_loaded: "onDOMContentLoaded", completed: "onCompleted" }[event];
+  if (!eventName) throw new Error(`event must be one of: committed, dom_content_loaded, completed`);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.webNavigation[eventName].removeListener(listener);
+      reject(new Error(`Timeout: no navigation to "${url}" within ${timeoutMs}ms`));
+    }, timeoutMs);
+    function listener(details) {
+      if (details.frameId !== 0) return;
+      if (details.url.includes(url) || details.url === url) {
+        clearTimeout(timer);
+        chrome.webNavigation[eventName].removeListener(listener);
+        resolve(JSON.stringify({ url: details.url, tabId: details.tabId, event, timestamp: new Date().toISOString() }));
+      }
+    }
+    chrome.webNavigation[eventName].addListener(listener);
+  });
+}
 
 // ============================================================================
 // Extension Lifecycle

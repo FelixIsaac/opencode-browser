@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.3.0 — 2026-05-16
+
+### Added
+
+**Chrome Sessions, Top Sites & Reading List** (`sessions`, `topSites`, `readingList` permissions)
+- `browser_recently_closed` — list recently closed tabs/windows with sessionIds
+- `browser_restore_session` — restore a closed tab or window by sessionId
+- `browser_top_sites` — get most-visited URLs (same as Chrome NTP tiles)
+- `browser_reading_list_get` — read all Chrome Reading List entries
+- `browser_reading_list_add` — add a URL to Chrome's Reading List
+- `browser_reading_list_remove` — remove a URL from Reading List
+
+**System Info, TTS & Data Management** (`system.cpu`, `system.memory`, `system.display`, `tts`, `browsingData`, `pageCapture` permissions)
+- `browser_system_info` — CPU model/cores, available RAM, display config
+- `browser_speak` — OS text-to-speech with rate/pitch/lang/voice control
+- `browser_clear_browsing_data` — clear cache, cookies, history, localStorage etc. by type + time range
+- `browser_save_mhtml` — save full page as MHTML archive (base64); richer than screenshot
+
+**CDP Tools** (`debugger` permission, already granted)
+- `browser_console_logs` — capture browser Log domain entries via CDP
+- `browser_get_cookies` — dump cookies for a tab's URL via `Network.getCookies`
+- `browser_get_dom` — full serialized `outerHTML` via `DOM.getOuterHTML` (truncated at 200KB)
+- `browser_get_version` — Chrome version, protocol version, user agent string
+- `browser_clear_storage` — clear `localStorage`, `sessionStorage`, `IndexedDB`, cache for an origin
+
+**Tab Search & Page Watcher** (no new permissions)
+- `browser_find_tabs` — keyword search across all tab titles + URLs
+- `browser_watch_page_start` — poll a tab for content changes; sends Chrome notification on change
+- `browser_watch_page_stop` — stop watching a tab
+
 ## 1.2.0 — 2026-05-16
 
 ### Added

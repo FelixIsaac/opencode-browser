@@ -662,18 +662,37 @@ async function toolBatchExecute({ tabIds, code }) {
   if (!code) throw new Error("code is required");
   if (tabIds.length > 50) throw new Error("tabIds limit is 50");
 
+  // Uses chrome.scripting.executeScript (not CDP debugger) so there's no
+  // per-tab attach/detach overhead — all tabs run truly in parallel.
+  // Trade-off: won't work on pages with strict CSP (unsafe-eval blocked).
+  // For CSP-strict pages, fall back to browser_execute per tab.
   const results = await Promise.allSettled(
     tabIds.map(async (tabId) => {
       const tab = await chrome.tabs.get(tabId).catch(() => null);
       if (!tab) return { tabId, error: "Tab not found" };
+      if (tab.discarded) return { tabId, error: "Tab is discarded — switch to it first to reload" };
       await assertUrlAllowed(tab.url);
-      const prev = debuggerQueue.get(tabId) ?? Promise.resolve();
-      const curr = prev.then(() => _executeWithDebugger(tabId, code));
-      const tail = curr.then(() => {}, () => {});
-      debuggerQueue.set(tabId, tail);
-      tail.finally(() => { if (debuggerQueue.get(tabId) === tail) debuggerQueue.delete(tabId); });
-      const result = await curr;
-      return { tabId, result: JSON.parse(result) };
+
+      const injection = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (codeStr) => {
+          try {
+            // eslint-disable-next-line no-new-func
+            const val = Function(`"use strict"; return (${codeStr})`)();
+            const json = JSON.stringify(val);
+            if (json.length > 51200) return { ok: false, error: `Result exceeds 50KB (${json.length} bytes)` };
+            return { ok: true, value: val };
+          } catch (e) {
+            return { ok: false, error: e.message };
+          }
+        },
+        args: [code]
+      });
+
+      const r = injection[0]?.result;
+      if (!r) throw new Error("No result from tab");
+      if (!r.ok) throw new Error(r.error);
+      return { tabId, result: r.value };
     })
   );
 

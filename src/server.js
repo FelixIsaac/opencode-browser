@@ -1452,7 +1452,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     if (STRUCTURED_OUTPUT_TOOLS.has(name)) {
       try {
         const parsed = JSON.parse(result);
-        const structured = name === "browser_get_tabs" ? { tabs: parsed } : parsed;
+        const structured = name === "browser_get_tabs" ? { tabs: parsed } : Array.isArray(parsed) ? { results: parsed } : parsed;
         return {
           content: [{ type: "text", text: result }],
           structuredContent: structured

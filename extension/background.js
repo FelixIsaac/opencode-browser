@@ -176,7 +176,7 @@ async function handleToolRequest(request) {
 
   try {
     // Block tools that touch tab content if the target URL is sensitive
-    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml", "get_version"]);
+    const tablessTools = new Set(["get_tabs", "wait", "new_tab", "close_tab", "switch_tab", "new_window", "search_history", "recent_browsing", "history_stats", "get_bookmarks", "get_tab_groups", "create_tab_group", "update_tab_group", "move_to_group", "deduplicate_tabs", "open_batch", "session_save", "session_restore", "notify", "storage_read", "downloads", "recently_closed", "restore_session", "top_sites", "reading_list_get", "reading_list_add", "reading_list_remove", "system_info", "speak", "clear_browsing_data", "save_mhtml", "get_version", "find_tabs", "watch_page_stop"]);
     if (!tablessTools.has(tool)) {
       await assertTabAllowed(args?.tabId ?? null);
     }
@@ -247,6 +247,9 @@ const TOOL_HANDLERS = {
   get_dom:              toolGetDom,
   get_version:          toolGetVersion,
   clear_storage:        toolClearStorage,
+  find_tabs:            toolFindTabs,
+  watch_page_start:     toolWatchPageStart,
+  watch_page_stop:      toolWatchPageStop,
 };
 
 async function executeTool(toolName, args) {
@@ -1320,6 +1323,84 @@ async function toolClearStorage({ tabId, storageTypes = ["local_storage", "sessi
     return `Cleared ${storageTypes.join(", ")} for ${origin}`;
   });
 }
+
+// ============================================================================
+// Tab Search & Page Watcher Tools
+// ============================================================================
+
+async function toolFindTabs({ query = "", matchUrl = true, matchTitle = true } = {}) {
+  if (!query) throw new Error("query is required");
+  const tabs = await chrome.tabs.query({});
+  const q = query.toLowerCase();
+  const matches = tabs.filter(t => {
+    const inUrl = matchUrl && t.url?.toLowerCase().includes(q);
+    const inTitle = matchTitle && t.title?.toLowerCase().includes(q);
+    return inUrl || inTitle;
+  });
+  return JSON.stringify(matches.map(t => ({
+    id: t.id, url: t.url, title: t.title, active: t.active, windowId: t.windowId,
+    matchedIn: [
+      ...(matchUrl && t.url?.toLowerCase().includes(q) ? ["url"] : []),
+      ...(matchTitle && t.title?.toLowerCase().includes(q) ? ["title"] : []),
+    ],
+  })));
+}
+
+async function toolWatchPageStart({ tabId, intervalSeconds = 30, notifyTitle = "Page Changed" } = {}) {
+  const tab = await getTabById(tabId);
+  const alarmName = `tandem-watch-${tab.id}`;
+  const watchers = (await chrome.storage.session.get("pageWatchers").catch(() => ({}))).pageWatchers || {};
+  watchers[tab.id] = { url: tab.url, tabId: tab.id, intervalSeconds, notifyTitle, alarmName };
+  await chrome.storage.session.set({ pageWatchers: watchers });
+  await chrome.alarms.create(alarmName, { periodInMinutes: Math.max(intervalSeconds / 60, 1) });
+  return `Watching tab ${tab.id} (${tab.url}) every ${Math.max(intervalSeconds, 60)}s`;
+}
+
+async function toolWatchPageStop({ tabId } = {}) {
+  if (!tabId) throw new Error("tabId is required");
+  const watchers = (await chrome.storage.session.get("pageWatchers").catch(() => ({}))).pageWatchers || {};
+  const watcher = watchers[tabId];
+  if (!watcher) return `No watcher found for tab ${tabId}`;
+  await chrome.alarms.clear(watcher.alarmName);
+  delete watchers[tabId];
+  await chrome.storage.session.set({ pageWatchers: watchers });
+  return `Stopped watching tab ${tabId}`;
+}
+
+// Page watcher alarm handler — separate from keepalive handler
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (!alarm.name.startsWith("tandem-watch-")) return;
+  const watchers = (await chrome.storage.session.get("pageWatchers").catch(() => ({}))).pageWatchers || {};
+  const tabId = parseInt(alarm.name.replace("tandem-watch-", ""), 10);
+  const watcher = watchers[tabId];
+  if (!watcher) return;
+  try {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const text = document.body?.innerText || "";
+        let hash = 0;
+        for (let i = 0; i < Math.min(text.length, 10000); i++) {
+          hash = ((hash << 5) - hash) + text.charCodeAt(i);
+          hash |= 0;
+        }
+        return hash;
+      },
+    });
+    const currentHash = result[0]?.result;
+    if (watcher.lastHash !== undefined && currentHash !== watcher.lastHash) {
+      chrome.notifications.create("", {
+        type: "basic", iconUrl: "icons/icon128.png",
+        title: watcher.notifyTitle,
+        message: `Content changed on ${watcher.url}`,
+      }, () => {});
+    }
+    watchers[tabId].lastHash = currentHash;
+    await chrome.storage.session.set({ pageWatchers: watchers });
+  } catch (e) {
+    console.warn(`[Tandem] Page watcher error for tab ${tabId}:`, e.message);
+  }
+});
 
 // ============================================================================
 // Extension Lifecycle

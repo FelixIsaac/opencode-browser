@@ -866,6 +866,43 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           storageTypes: { type: "array", items: { type: "string" }, description: "Storage types to clear (default: local_storage, session_storage, cache_storage, indexeddb). Options: cookies, local_storage, session_storage, indexeddb, cache_storage, service_workers, file_systems" }
         }
       }
+    },
+    {
+      name: "browser_find_tabs",
+      description: "Search all open tabs by keyword — matches against URL and/or title. Better than filtering browser_get_tabs output manually.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Text to search for (case-insensitive)" },
+          matchUrl: { type: "boolean", description: "Search in URLs (default true)" },
+          matchTitle: { type: "boolean", description: "Search in titles (default true)" }
+        },
+        required: ["query"]
+      }
+    },
+    {
+      name: "browser_watch_page_start",
+      description: "Start watching a tab for content changes. Sends a Chrome notification when page text changes. Min interval 60s (Chrome alarm limit).",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          tabId: { type: "number", description: "Tab to watch (default: agent tab)" },
+          intervalSeconds: { type: "number", description: "Check interval in seconds (minimum 60 due to Chrome alarm limits, default 30 → rounded up)" },
+          notifyTitle: { type: "string", description: "Notification title when change detected (default: 'Page Changed')" }
+        }
+      }
+    },
+    {
+      name: "browser_watch_page_stop",
+      description: "Stop watching a tab for content changes.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        type: "object",
+        properties: { tabId: { type: "number", description: "Tab ID to stop watching" } },
+        required: ["tabId"]
+      }
     }
   ]
 }));
@@ -905,6 +942,7 @@ const STRUCTURED_OUTPUT_TOOLS = new Set([
   "browser_get_cookies",
   "browser_get_dom",
   "browser_get_version",
+  "browser_find_tabs",
 ]);
 
 // Maps MCP tool names to internal tool names used by background.js
@@ -964,6 +1002,9 @@ const TOOL_MAP = {
   browser_get_dom:             "get_dom",
   browser_get_version:         "get_version",
   browser_clear_storage:       "clear_storage",
+  browser_find_tabs:           "find_tabs",
+  browser_watch_page_start:    "watch_page_start",
+  browser_watch_page_stop:     "watch_page_stop",
 };
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
